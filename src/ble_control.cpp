@@ -10,19 +10,17 @@ static CRGB color2 = CRGB(0, 206, 209);    // Cyber cyan
 static CRGB color3 = CRGB(255, 105, 180);  // Cyber hot pink
 static uint8_t currentBPM = DEFAULT_BPM;
 
-class EffectCallbacks : public NimBLECharacteristicCallbacks {
+// One callback for every uint8_t knob.
+// ponytail: clamps out-of-range writes instead of ignoring them — replaces three
+// near-identical classes that disagreed on whether to clamp or reject.
+class ByteCallbacks : public NimBLECharacteristicCallbacks {
+    uint8_t* target;
+    uint8_t lo, hi;
+public:
+    ByteCallbacks(uint8_t* t, uint8_t lo, uint8_t hi) : target(t), lo(lo), hi(hi) {}
     void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
         uint8_t value = pCharacteristic->getValue<uint8_t>();
-        if (value < NUM_EFFECTS) {
-            currentEffect = value;
-        }
-    }
-};
-
-class BrightnessCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
-        uint8_t value = pCharacteristic->getValue<uint8_t>();
-        currentBrightness = (value < MAX_BRIGHTNESS) ? value : MAX_BRIGHTNESS;
+        *target = (value < lo) ? lo : (value > hi) ? hi : value;
     }
 };
 
@@ -42,15 +40,6 @@ public:
     }
 };
 
-class BPMCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
-        uint8_t value = pCharacteristic->getValue<uint8_t>();
-        if (value >= MIN_BPM && value <= MAX_BPM) {
-            currentBPM = value;
-        }
-    }
-};
-
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         Serial.println("BLE client connected");
@@ -61,13 +50,23 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
 };
 
-static EffectCallbacks effectCb;
-static BrightnessCallbacks brightnessCb;
+static ByteCallbacks effectCb(&currentEffect, 0, NUM_EFFECTS - 1);
+static ByteCallbacks brightnessCb(&currentBrightness, 0, MAX_BRIGHTNESS);
+static ByteCallbacks bpmCb(&currentBPM, MIN_BPM, MAX_BPM);
 static ColorCallbacks color1Cb(&color1);
 static ColorCallbacks color2Cb(&color2);
 static ColorCallbacks color3Cb(&color3);
-static BPMCallbacks bpmCb;
 static ServerCallbacks serverCb;
+static NimBLECharacteristic* batteryChar = nullptr;
+
+static void addChar(NimBLEService* svc, const char* uuid,
+                    NimBLECharacteristicCallbacks* cb,
+                    const uint8_t* initial, size_t len) {
+    auto* c = svc->createCharacteristic(
+        uuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+    c->setCallbacks(cb);
+    c->setValue(initial, len);
+}
 
 void initBLE() {
     NimBLEDevice::init(DEVICE_NAME);
@@ -77,38 +76,23 @@ void initBLE() {
     pServer->setCallbacks(&serverCb);
     NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
-    auto* pEffectChar = pService->createCharacteristic(
-        EFFECT_CHAR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    pEffectChar->setCallbacks(&effectCb);
-    pEffectChar->setValue(currentEffect);
-
-    auto* pBrightnessChar = pService->createCharacteristic(
-        BRIGHTNESS_CHAR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    pBrightnessChar->setCallbacks(&brightnessCb);
-    pBrightnessChar->setValue(currentBrightness);
-
-    auto* pColor1Char = pService->createCharacteristic(
-        COLOR1_CHAR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    pColor1Char->setCallbacks(&color1Cb);
     uint8_t c1[] = {color1.r, color1.g, color1.b};
-    pColor1Char->setValue(c1, 3);
-
-    auto* pColor2Char = pService->createCharacteristic(
-        COLOR2_CHAR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    pColor2Char->setCallbacks(&color2Cb);
     uint8_t c2[] = {color2.r, color2.g, color2.b};
-    pColor2Char->setValue(c2, 3);
-
-    auto* pColor3Char = pService->createCharacteristic(
-        COLOR3_CHAR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    pColor3Char->setCallbacks(&color3Cb);
     uint8_t c3[] = {color3.r, color3.g, color3.b};
-    pColor3Char->setValue(c3, 3);
 
-    auto* pBPMChar = pService->createCharacteristic(
-        BPM_CHAR_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    pBPMChar->setCallbacks(&bpmCb);
-    pBPMChar->setValue(currentBPM);
+    addChar(pService, EFFECT_CHAR_UUID,     &effectCb,     &currentEffect,     1);
+    addChar(pService, BRIGHTNESS_CHAR_UUID, &brightnessCb, &currentBrightness, 1);
+    addChar(pService, COLOR1_CHAR_UUID,     &color1Cb,     c1,                 3);
+    addChar(pService, COLOR2_CHAR_UUID,     &color2Cb,     c2,                 3);
+    addChar(pService, COLOR3_CHAR_UUID,     &color3Cb,     c3,                 3);
+    addChar(pService, BPM_CHAR_UUID,        &bpmCb,        &currentBPM,        1);
+
+    // Standard Battery Service rather than another custom UUID — clients that
+    // already speak BLE get the gauge for free.
+    NimBLEService* pBattery = pServer->createService(NimBLEUUID((uint16_t)0x180F));
+    batteryChar = pBattery->createCharacteristic(
+        NimBLEUUID((uint16_t)0x2A19),
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
 
     pServer->start();
 
@@ -117,9 +101,21 @@ void initBLE() {
     pAdvertising->start();
 }
 
+void setBatteryLevel(uint8_t percent) {
+    if (!batteryChar) return;
+    batteryChar->setValue(&percent, 1);
+    batteryChar->notify();
+}
+
 uint8_t getCurrentEffect()     { return currentEffect; }
 uint8_t getCurrentBrightness() { return currentBrightness; }
-CRGB getColor1() { return color1; }
-CRGB getColor2() { return color2; }
-CRGB getColor3() { return color3; }
+// Stored raw so the characteristic reads back exactly what the app wrote — the
+// picker would otherwise drift darker on every reconnect. Correction happens
+// here, on the way to the LEDs.
+//
+// applyGamma_video maps 0 to 0, so an all-black colour 3 still reads as the
+// two-colour-chase signal.
+CRGB getColor1() { return applyGamma_video(color1, COLOR_GAMMA); }
+CRGB getColor2() { return applyGamma_video(color2, COLOR_GAMMA); }
+CRGB getColor3() { return applyGamma_video(color3, COLOR_GAMMA); }
 uint8_t getBPM() { return currentBPM; }

@@ -10,4 +10,3 @@ void analyzeFrequencies();
 float getBassEnergy();
 float getMidEnergy();
 float getHighEnergy();
-bool isBeat();
