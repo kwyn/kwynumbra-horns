@@ -1,0 +1,10 @@
+{
+  "name": "Kwynumbra",
+  "short_name": "Kwynumbra",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#9b59b6"
+}

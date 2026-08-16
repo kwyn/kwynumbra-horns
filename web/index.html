@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Kwynumbra</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#9b59b6">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -372,6 +376,12 @@ async function writeBPM(val) {
   } catch (err) {
     setStatus('Write error: ' + err.message);
   }
+}
+
+// Cache the page for offline use. Failure is not worth surfacing — it only
+// costs offline support, and BLE control still works while the page is loaded.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
 // Connect
