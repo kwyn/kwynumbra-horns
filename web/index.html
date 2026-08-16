@@ -171,6 +171,9 @@
   .color-pick input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
   .color-pick input[type="color"]::-webkit-color-swatch { border-radius: 50%; border: none; }
   .color-pick label { font-size: 0.65em; color: #666; }
+  /* Unchecking Color 3 gives a two-colour chase. */
+  .color-pick label input[type="checkbox"] { accent-color: #9b59b6; vertical-align: middle; }
+  .color-pick input[type="color"]:disabled { opacity: 0.25; }
 
   /* Effects grid */
   .effects-grid {
@@ -274,7 +277,7 @@
     </div>
     <div class="color-pick">
       <input type="color" id="color3" value="#FF69B4">
-      <label>Color 3</label>
+      <label><input type="checkbox" id="color3-on" checked> Color 3</label>
     </div>
   </div>
 
@@ -327,6 +330,7 @@ const bpmVal = document.getElementById('bpm-val');
 const bpmDown = document.getElementById('bpm-down');
 const bpmUp = document.getElementById('bpm-up');
 const customColors = document.getElementById('custom-colors');
+const color3On = document.getElementById('color3-on');
 const colorInputs = [
   document.getElementById('color1'),
   document.getElementById('color2'),
@@ -376,6 +380,7 @@ connectBtn.addEventListener('click', async () => {
     setStatus('Scanning...');
     const device = await navigator.bluetooth.requestDevice({
       filters: [{ services: [SERVICE_UUID] }],
+      optionalServices: ['battery_service'],
     });
 
     device.addEventListener('gattserverdisconnected', () => {
@@ -415,12 +420,30 @@ connectBtn.addEventListener('click', async () => {
 
     colorInputs[0].value = rgbToHex(c1.getUint8(0), c1.getUint8(1), c1.getUint8(2));
     colorInputs[1].value = rgbToHex(c2.getUint8(0), c2.getUint8(1), c2.getUint8(2));
-    colorInputs[2].value = rgbToHex(c3.getUint8(0), c3.getUint8(1), c3.getUint8(2));
+    // Black means the device is already in two-color mode. Leave the picker's
+    // own value alone so re-enabling restores a real color rather than black.
+    const c3Off = c3.getUint8(0) === 0 && c3.getUint8(1) === 0 && c3.getUint8(2) === 0;
+    color3On.checked = !c3Off;
+    colorInputs[2].disabled = c3Off;
+    if (!c3Off) colorInputs[2].value = rgbToHex(c3.getUint8(0), c3.getUint8(1), c3.getUint8(2));
 
     connectBtn.textContent = 'Connected';
     connectBtn.classList.add('connected');
     controls.style.display = 'block';
     setStatus('');
+
+    // Standard Battery Service. Reuses the status line, which is empty once
+    // connected. Wrapped so older firmware without it still connects fine.
+    try {
+      const batteryChar = await (await server.getPrimaryService('battery_service'))
+        .getCharacteristic('battery_level');
+      const show = v => setStatus(`Battery ${v.getUint8(0)}%`);
+      batteryChar.addEventListener('characteristicvaluechanged', e => show(e.target.value));
+      await batteryChar.startNotifications();
+      show(await batteryChar.readValue());
+    } catch (err) {
+      setStatus('Battery unavailable');
+    }
   } catch (err) {
     setStatus('Error: ' + err.message);
   }
@@ -490,6 +513,10 @@ presetBtns.forEach(btn => {
     colorInputs[1].value = colors[1];
     colorInputs[2].value = colors[2];
 
+    // A preset supplies all three colors, so it turns Color 3 back on.
+    color3On.checked = true;
+    colorInputs[2].disabled = false;
+
     await writeColor(color1Char, colors[0]);
     await writeColor(color2Char, colors[1]);
     await writeColor(color3Char, colors[2]);
@@ -502,6 +529,13 @@ colorInputs.forEach((input, i) => {
   input.addEventListener('input', () => {
     writeColor(colorChars()[i], input.value);
   });
+});
+
+// Color 3 off = two-color chase. Black on the wire is the signal; the firmware
+// splits the strip into two segments instead of three.
+color3On.addEventListener('change', () => {
+  colorInputs[2].disabled = !color3On.checked;
+  writeColor(color3Char, color3On.checked ? colorInputs[2].value : '#000000');
 });
 </script>
 
