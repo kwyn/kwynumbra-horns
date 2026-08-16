@@ -107,6 +107,15 @@ Bluetooth requires a secure context, so `file://` silently fails — always serv
 it. Battery uses the standard `battery_service` / `battery_level` UUIDs, which
 must be listed in `optionalServices` on `requestDevice` or the read throws.
 
+Deployment is just a push to `main`; the phone loads it through githack. See the
+README for the URL and why it must be the `/main/` form rather than a commit
+SHA. Bluefy hard-requires HTTPS — there is no plain-HTTP LAN fallback for iOS,
+so changes have to be pushed to be testable on the phone.
+
+`sw.js` is network-first on purpose. Cache-first would strand the page on an old
+build, which is the failure this project is most likely to hit: the device gets
+used far from any computer, so a wedged cache can't be cleared by hand.
+
 ## Conventions
 
 Deliberate shortcuts are marked with `ponytail:` comments naming the ceiling and
