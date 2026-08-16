@@ -40,11 +40,11 @@ Web Bluetooth at all, and `file://` won't work anywhere.
 
 **On the phone**, load this in Bluefy:
 
-<https://raw.githack.com/kwyn/kwynumbra-horns/main/web/index.html>
+<https://horns.kwyn.io/web/>
 
-Use the `/main/` URL, not a commit-pinned one — the path has to stay stable or
-the service worker cache resets on every deploy. githack's CDN cache clears
-within a minute or two of a push.
+Served by GitHub Pages off `main`, so deploying is just a push. HTTPS is
+enforced, and plain HTTP 301s up — which matters, because Web Bluetooth fails
+silently on an insecure origin rather than telling you why.
 
 **On desktop**, serve it locally (`localhost` counts as a secure context, so no
 certificate needed):
@@ -74,12 +74,19 @@ launch that was never cached gets nothing.
 Note that colors, effects, BPM and brightness all travel over BLE — none of that
 needs the page to be updated. Only UI changes require a fresh load.
 
-### GitHub Pages (currently a dead end)
+### Hosting
 
-Pages is enabled on `main` at root, but `kwyn.github.io` 301-redirects to the
-`www.kwyn.io` user-site custom domain, which resolves to a DigitalOcean host
-rather than GitHub's `185.199.108–111.153`, and does not respond. Until that
-host is fixed or the custom domain comes off the user site, use githack.
+GitHub Pages, `main` at root, custom domain `horns.kwyn.io` (a `CNAME` to
+`kwyn.github.io` in DigitalOcean DNS, TTL 300).
+
+The custom domain on the *project* repo is doing real work. Without it, project
+pages inherit the `kwyn.github.io` user-site domain and 301 to `www.kwyn.io`,
+which points at an unrelated DigitalOcean host — so the plain
+`kwyn.github.io/kwynumbra-horns/` path does not serve this. Don't remove the
+custom domain expecting to fall back to it.
+
+Pages also gets the content types right, which a raw-file CDN may not: a service
+worker served as `text/plain` refuses to register.
 
 ## Effects
 
