@@ -411,32 +411,53 @@ function rgbToHex(r, g, b) {
   return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
 }
 
-async function writeColor(char, hex) {
+// Web Bluetooth allows exactly one GATT operation at a time per device, so
+// every write has to go through one gate. Without it, nudging brightness while
+// the mic is streaming throws "GATT operation already in progress" on both —
+// which only shows up once something writes continuously.
+let gattBusy = false;
+const gattQueue = [];
+
+function pumpGatt() {
+  if (gattBusy || !gattQueue.length) return;
+  gattBusy = true;
+  gattQueue.shift()()
+    .catch(err => setStatus('Write error: ' + err.message))
+    .finally(() => { gattBusy = false; pumpGatt(); });
+}
+
+// Control writes queue — a dropped brightness change is a bug.
+function gattWrite(char, bytes) {
   if (!char) return;
-  try {
-    const [r, g, b] = hexToRgb(hex);
-    await char.writeValue(new Uint8Array([r, g, b]));
-  } catch (err) {
-    setStatus('Write error: ' + err.message);
-  }
+  gattQueue.push(() => char.writeValue(bytes));
+  pumpGatt();
 }
 
-async function writeColorCount(n) {
-  if (!colorCountChar) return;
-  try {
-    await colorCountChar.writeValue(new Uint8Array([n]));
-  } catch (err) {
-    setStatus('Write error: ' + err.message);
-  }
+// Audio drops rather than queues. A queued frame is already stale by the time
+// it lands, and queueing every frame is exactly the unbounded backlog this is
+// meant to prevent.
+function gattStream(char, bytes) {
+  if (!char || gattBusy || gattQueue.length) return;
+  gattBusy = true;
+  // Without-response: a per-frame round trip chokes at this rate.
+  const w = char.writeValueWithoutResponse
+    ? char.writeValueWithoutResponse(bytes)
+    : char.writeValue(bytes);
+  w.catch(() => {})   // transient; the next frame carries fresher data
+   .finally(() => { gattBusy = false; pumpGatt(); });
 }
 
-async function writeBPM(val) {
-  if (!bpmChar) return;
-  try {
-    await bpmChar.writeValue(new Uint8Array([val]));
-  } catch (err) {
-    setStatus('Write error: ' + err.message);
-  }
+function writeColor(char, hex) {
+  const [r, g, b] = hexToRgb(hex);
+  gattWrite(char, new Uint8Array([r, g, b]));
+}
+
+function writeColorCount(n) {
+  gattWrite(colorCountChar, new Uint8Array([n]));
+}
+
+function writeBPM(val) {
+  gattWrite(bpmChar, new Uint8Array([val]));
 }
 
 // Cache the page for offline use. Failure is not worth surfacing — it only
@@ -531,38 +552,24 @@ effectBtns.forEach(btn => {
   btn.addEventListener('click', async () => {
     if (!effectChar) return;
     const idx = parseInt(btn.dataset.effect);
-    try {
-      await effectChar.writeValue(new Uint8Array([idx]));
-      effectBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    } catch (err) {
-      setStatus('Write error: ' + err.message);
-    }
+    gattWrite(effectChar, new Uint8Array([idx]));
+    effectBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
   });
 });
 
 // Brightness
-brightnessSlider.addEventListener('input', async () => {
+brightnessSlider.addEventListener('input', () => {
   const val = parseInt(brightnessSlider.value);
   brightnessVal.textContent = val;
-  if (!brightnessChar) return;
-  try {
-    await brightnessChar.writeValue(new Uint8Array([val]));
-  } catch (err) {
-    setStatus('Write error: ' + err.message);
-  }
+  gattWrite(brightnessChar, new Uint8Array([val]));
 });
 
 // Horn length
-hornSlider.addEventListener('input', async () => {
+hornSlider.addEventListener('input', () => {
   const val = parseInt(hornSlider.value);
   hornVal_.textContent = val;
-  if (!hornLenChar) return;
-  try {
-    await hornLenChar.writeValue(new Uint8Array([val]));
-  } catch (err) {
-    setStatus('Write error: ' + err.message);
-  }
+  gattWrite(hornLenChar, new Uint8Array([val]));
 });
 
 // BPM
@@ -656,24 +663,6 @@ let micStream = null, micCtx = null, micRAF = 0;
 const micBtn = document.getElementById('mic-btn');
 const micBars = ['mic-b', 'mic-m', 'mic-h'].map(id => document.getElementById(id));
 
-// Web Bluetooth queues writes. Driving them from rAF without a guard builds an
-// unbounded backlog that shows up minutes later as lag, so the in-flight flag
-// doubles as the rate limiter — it self-paces to whatever the link can carry.
-let writing = false;
-async function pushAudio(bytes) {
-  if (!audioChar || writing) return;
-  writing = true;
-  try {
-    // Without-response, because a per-frame round trip chokes at this rate.
-    if (audioChar.writeValueWithoutResponse) await audioChar.writeValueWithoutResponse(bytes);
-    else await audioChar.writeValue(bytes);
-  } catch (err) {
-    // Transient under load; the next frame carries fresher data anyway.
-  } finally {
-    writing = false;
-  }
-}
-
 async function startListening() {
   // The speech-tuned defaults actively fight bass content — AGC in particular
   // pumps sub against mids and flattens the spectral tilt into nothing.
@@ -751,7 +740,7 @@ async function startListening() {
     out[1] = band[0] * 255;
     out[2] = band[1] * 255;
     out[3] = band[2] * 255;
-    pushAudio(out);
+    gattStream(audioChar, out);
 
     // Resample onsets to a fixed rate so autocorrelation sees an even timebase.
     // Max rather than last, so a transient between samples isn't dropped.
@@ -791,9 +780,10 @@ async function stopListening() {
   if (micCtx) micCtx.close();
   micStream = micCtx = null;
   micBars.forEach(el => { el.style.height = '2px'; });
-  // The firmware's staleness timeout would catch this within half a second
-  // anyway, but an explicit zero makes "off" instant instead of a slow fade.
-  await pushAudio(new Uint8Array([0, 0, 0, 0]));
+  // The firmware's staleness timeout catches this within half a second anyway,
+  // but an explicit zero makes "off" instant. Queued, not streamed, so it can't
+  // be dropped for being the one write that arrived while the gate was busy.
+  gattWrite(audioChar, new Uint8Array([0, 0, 0, 0]));
 }
 
 micBtn.addEventListener('click', async () => {

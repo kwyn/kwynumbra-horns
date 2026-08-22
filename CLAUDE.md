@@ -127,6 +127,8 @@ catches it.
 
 - `battery_test.cpp` — asserts on the SoC curve.
 - `golden.cpp` — renders effects and byte-compares against `golden.txt`.
+- `web.js` — checks `web/index.html`, which nothing else checks. Skipped with a
+  notice if `node` isn't installed.
 
 The golden test fails on **any** visual change to `effects.cpp`, including
 intended ones. Re-baseline with `./test/run.sh --bless`, and only when the
@@ -157,10 +159,10 @@ Tempo detection searches 90–179 BPM. A range narrower than one octave *cannot*
 produce an octave error, which is autocorrelation's classic failure — 140 BPM
 confidently reported as 70. Don't widen it without replacing the mechanism.
 
-There is no linter or build step, so the check for this file is manual: extract
-the `<script>` block and evaluate its top level against DOM stubs. That catches
-undeclared identifiers and `getElementById` typos, which are otherwise only
-discoverable on the phone. Battery uses the standard `battery_service` / `battery_level` UUIDs, which
+There is no linter or build step, so `test/web.js` (run by `./test/run.sh`) is
+this file's only check. It evaluates the `<script>` block's top level against
+DOM stubs — catching undeclared identifiers and `getElementById` typos — and
+asserts the GATT gate above actually serialises. Battery uses the standard `battery_service` / `battery_level` UUIDs, which
 must be listed in `optionalServices` on `requestDevice` or the read throws.
 
 Deployed by GitHub Pages from `main`, so a push is the deploy. Bluefy

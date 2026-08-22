@@ -28,6 +28,13 @@ g++ -std=c++17 -DFASTLED_STUB_IMPL -I"$FL" -Isrc \
 g++ -std=c++17 -Isrc -o "$OBJ/battery" test/battery_test.cpp
 "$OBJ/battery"
 
+# web/index.html has no build step and no linter, so this is its only check.
+if command -v node > /dev/null 2>&1; then
+    node test/web.js
+else
+    echo "SKIP - web checks need node"
+fi
+
 if [ "$1" = "--bless" ]; then
     "$OBJ/golden" > test/golden.txt
     echo "baseline updated: test/golden.txt"
