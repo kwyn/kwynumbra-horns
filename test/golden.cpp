@@ -50,8 +50,8 @@ int main() {
             g_bass = (frame % 8) / 8.0f;     // deterministic stand-in for mic input
             g_mid  = (frame % 5) / 5.0f;
             g_high = (frame % 3) / 3.0f;
-            // Periodic hits so bloom actually spawns pulses, and a full sweep
-            // of the tilt ramp so a change to tiltColor() shows up here.
+            // Periodic hits so the kick-driven paths fire, and a full sweep of
+            // the tilt ramp so a change to tiltColor() shows up here.
             g_kick = (frame % 7 == 0) ? 0.9f : 0.05f;
             g_tilt = frame / 20.0f - 1.0f;
 

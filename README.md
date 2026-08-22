@@ -90,13 +90,14 @@ worker served as `text/plain` refuses to register.
 
 ## Effects
 
-`rainbow`, `chase`, `bass pulse`, `spectrum`, `bass bloom`. The last three are
-sound-reactive and need the phone listening — see below.
+`rainbow`, `chase`, `bass pulse`, `spectrum`, `flow`. All but `rainbow` react to
+audio in some way, and all of that needs the phone listening — see below.
 
-`bass bloom` is the one built for bass music. The base of a horn is LED 0; each
-kick throws a pulse out toward the tip, sustained sub sets a glow underneath it,
-and the spectral balance of the track slides the colour along your chosen
-palette over several seconds.
+`chase` scrolls at the tempo and lifts on every kick. `spectrum` and `flow` read
+the same three bands and differ only in whether the boundaries are hard:
+`spectrum` steps between three zones so each band is legible on its own, `flow`
+runs the whole horn as one gradient. Both colour themselves along the palette
+you picked rather than inventing hues, so a two-colour palette works in either.
 
 ## Audio
 
@@ -105,9 +106,15 @@ phone is the microphone.** It is already paired to drive the horns, and the
 browser has a hardware-accelerated FFT sitting idle; the ESP32 has neither a
 double-precision FPU nor spare milliseconds in a 60fps render loop.
 
-Tap **Listen** in the controller. The phone analyses the room and streams four
-bytes to the horns — kick, bass, mid, high — around 25 times a second, and
-detects tempo so the BPM-driven effects follow the track.
+Tap **Listen** in the controller. The phone analyses the room and streams five
+bytes to the horns — kick, bass, mid, high, spectral balance — around 25 times a
+second, and detects tempo so the BPM-driven effects follow the track.
+
+The band edges are measured, not derived. Through a phone mic in a room, with
+bass-heavy material, everything above ~2.5kHz sits within a few dB of the
+analyser's floor, so the bands sit about two octaves below where theory would
+put them. `web/mictest.html` is the probe — re-run it if the mic or venue
+changes.
 
 Two things to know:
 
@@ -118,9 +125,8 @@ Two things to know:
 - The mic is requested with auto-gain, echo cancellation and noise suppression
   **off**. Those defaults are tuned for speech and actively fight bass content.
 
-## Horn length
+## Geometry
 
-`Horn length` in the controller sets how many LEDs from the base make up one
-horn, and `bass bloom` renders exactly that far. It is adjustable live because
-the strip has never been counted — drag it up, see where the light stops
-against the real tip, and that is your number.
+53 LEDs per horn, both horns fed from IO4 in parallel. Same data line, so they
+mirror in hardware and the firmware only ever renders one horn's worth. LED 0 is
+the base.

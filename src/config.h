@@ -74,13 +74,12 @@ constexpr const char* AUDIO_CHAR_UUID      = "19b10008-e8f2-537e-4f6c-d104768a12
 constexpr float COLOR_GAMMA = 2.2f;
 
 // Effects
-constexpr uint8_t NUM_EFFECTS = 6;
+constexpr uint8_t NUM_EFFECTS = 5;
 constexpr uint8_t EFFECT_RAINBOW    = 0;
 constexpr uint8_t EFFECT_CHASE      = 1;
 constexpr uint8_t EFFECT_BASS_PULSE = 2;
 constexpr uint8_t EFFECT_SPECTRUM   = 3;
-constexpr uint8_t EFFECT_BASS_BLOOM = 4;
-constexpr uint8_t EFFECT_FLOW       = 5;
+constexpr uint8_t EFFECT_FLOW       = 4;
 
 // BPM
 constexpr uint8_t DEFAULT_BPM = 128;
