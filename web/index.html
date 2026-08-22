@@ -646,8 +646,10 @@ const BANDS = [[1, 8], [9, 85], [86, 341]];   // bass 20-200Hz, mid 200-2k, high
 
 // ponytail: feel knobs, every one of them. Tune against real tracks on the
 // actual horns — a phone mic in a club is not a phone mic on a desk.
-const NOISE_FLOOR   = 60;     // raw bin level below which a band reads as silence
-const GAIN_TAU_MS   = 8000;   // how fast the loudness reference forgets a loud moment
+const GAIN_TAU_MS   = 8000;   // how fast a band's floor/peak forget a moment
+const MIN_SPAN      = 12;     // byte range a band must move before it counts as live
+const BALANCE_TAU_MS = 30000; // what "usual brightness" means; spans a set, not a track
+const BALANCE_RANGE  = 40;    // byte swing away from usual that reads as fully warm/cold
 const BASS_TAU_MS   = 300;    // onset baseline; longer means only sharper hits count
 const TEMPO_HZ      = 50;     // fixed tempo-buffer rate, independent of rAF's wobble
 const TEMPO_SECONDS = 6;
@@ -659,6 +661,56 @@ const TEMPO_MIN_SCORE = 0.004;   // below this, the room isn't carrying a beat
 
 let listening = false;
 let micStream = null, micCtx = null, micRAF = 0;
+
+// Per-band level, normalised against that band's OWN working range.
+//
+// A single absolute threshold cannot work here. Spectral energy rolls off with
+// frequency and the bands are wildly different widths — bass averages 8 bins
+// that are all hot, high averages 256 bins across 2-8kHz that mostly are not.
+// A floor tuned for one sits above the whole of the other and pins it to zero
+// forever, which is how the high band came to read as permanent silence.
+//
+// Returns raw alongside level, because spectral balance has to come from the
+// raw dB-mapped values. Auto-gained levels cannot answer "where does the energy
+// sit": each is normalised to its own range, so a sub-only track and a bright
+// one both peg every band at 1.0 once they get loud.
+function makeBandTracker() {
+  const floors = [255, 255, 255];
+  const peaks = [0, 0, 0];
+  let balanceAvg = null;
+
+  return function track(bins, dt) {
+    const settle = 1 - Math.exp(-dt / GAIN_TAU_MS);
+
+    const raw = BANDS.map(([lo, hi]) => {
+      let sum = 0;
+      for (let j = lo; j <= hi; j++) sum += bins[j];
+      return sum / (hi - lo + 1);
+    });
+
+    const level = raw.map((v, i) => {
+      // Floor drops straight to a new quiet and creeps back up; peak jumps to a
+      // new loud and decays back down. Between them is this band's own range,
+      // wherever it happens to sit in absolute terms.
+      floors[i] = v < floors[i] ? v : floors[i] + (v - floors[i]) * settle;
+      peaks[i] = v > peaks[i] ? v : peaks[i] - (peaks[i] - v) * settle;
+      const span = peaks[i] - floors[i];
+      if (span < MIN_SPAN) return 0;   // band isn't moving; don't amplify hiss
+      return Math.min(1, Math.max(0, (v - floors[i]) / span));
+    });
+
+    // Where the energy sits, in byte units that are already dB-mapped. Centred
+    // on its own long-run average so it reads as "brighter or darker than this
+    // room and this mic usually are" — an absolute would sit permanently
+    // negative thanks to spectral rolloff and the phone mic's own response.
+    const balance = raw[2] - raw[0];
+    if (balanceAvg === null) balanceAvg = balance;
+    else balanceAvg += (balance - balanceAvg) * (1 - Math.exp(-dt / BALANCE_TAU_MS));
+    const tilt = Math.max(-1, Math.min(1, (balance - balanceAvg) / BALANCE_RANGE));
+
+    return { raw, level, tilt };
+  };
+}
 
 const micBtn = document.getElementById('mic-btn');
 const micBars = ['mic-b', 'mic-m', 'mic-h'].map(id => document.getElementById(id));
@@ -680,9 +732,9 @@ async function startListening() {
   micCtx.createMediaStreamSource(micStream).connect(an);
 
   const bins = new Uint8Array(an.frequencyBinCount);
-  const peaks = [1, 1, 1];
+  const bandTracker = makeBandTracker();
   const tempoBuf = new Float32Array(TEMPO_HZ * TEMPO_SECONDS);
-  const out = new Uint8Array(4);
+  const out = new Uint8Array(5);
   let bassSlow = 0, kickPeak = 0.02;
   let tempoIdx = 0, tempoAcc = 0, tempoMax = 0;
   let bpmGuess = 0, bpmRepeat = 0;
@@ -716,17 +768,7 @@ async function startListening() {
 
     an.getByteFrequencyData(bins);
     const forget = Math.exp(-dt / GAIN_TAU_MS);
-
-    // Per-band level, auto-gained against a slowly-forgetting peak. This is the
-    // job the firmware's BASS_SCALE/MID_SCALE/HIGH_SCALE constants did by hand,
-    // except it retunes itself to the room instead of needing a rebuild.
-    const band = BANDS.map(([lo, hi], i) => {
-      let sum = 0;
-      for (let j = lo; j <= hi; j++) sum += bins[j];
-      const v = Math.max(0, sum / (hi - lo + 1) - NOISE_FLOOR);
-      peaks[i] = Math.max(v, peaks[i] * forget, 1);
-      return v / peaks[i];
-    });
+    const { level: band, tilt } = bandTracker(bins, dt);
 
     // Kick is a bass *onset*, not a bass level. Sustained sub — a reece, a
     // wobble — holds band[0] high for a whole drop, so only the rise above the
@@ -740,6 +782,7 @@ async function startListening() {
     out[1] = band[0] * 255;
     out[2] = band[1] * 255;
     out[3] = band[2] * 255;
+    out[4] = (tilt + 1) * 127.5;   // -1..+1 -> 0..255, 128 is neutral
     gattStream(audioChar, out);
 
     // Resample onsets to a fixed rate so autocorrelation sees an even timebase.
@@ -783,7 +826,7 @@ async function stopListening() {
   // The firmware's staleness timeout catches this within half a second anyway,
   // but an explicit zero makes "off" instant. Queued, not streamed, so it can't
   // be dropped for being the one write that arrived while the gate was busy.
-  gattWrite(audioChar, new Uint8Array([0, 0, 0, 0]));
+  gattWrite(audioChar, new Uint8Array([0, 0, 0, 0, 128]));
 }
 
 micBtn.addEventListener('click', async () => {

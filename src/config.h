@@ -55,7 +55,12 @@ constexpr const char* BPM_CHAR_UUID        = "19b10006-e8f2-537e-4f6c-d104768a12
 // sending black as colour 3 to mean "two colours", which made an intentionally
 // black segment unreachable and silently blanked the spectrum effect's top zone.
 constexpr const char* COLORCOUNT_CHAR_UUID = "19b10007-e8f2-537e-4f6c-d104768a1214";
-// Four bytes: kick, bass, mid, high. Written ~25Hz by the phone.
+// Five bytes: kick, bass, mid, high, balance. Written ~25Hz by the phone.
+// Balance is spectral tilt, 0 = all sub, 128 = neutral, 255 = all air. It comes
+// from the phone rather than being derived here because it has to be computed
+// from raw band levels — the per-band energies above are each normalised to
+// their own range, so comparing them answers "which band is busier", not
+// "where does the energy sit".
 constexpr const char* AUDIO_CHAR_UUID      = "19b10008-e8f2-537e-4f6c-d104768a1214";
 // How many LEDs from the base (LED 0) make up one horn. Adjustable at runtime
 // rather than compiled in, because the strip has never actually been counted —

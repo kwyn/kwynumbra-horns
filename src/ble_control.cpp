@@ -16,7 +16,7 @@ static uint8_t hornLen = DEFAULT_HORN_LEDS;
 // [kick, bass, mid, high] as written by the phone, plus when it last arrived.
 // Starting the timestamp at 0 makes the staleness check below correct from boot
 // for free — before the first write, the audio is (correctly) silence.
-static uint8_t audioBytes[4] = {0, 0, 0, 0};
+static uint8_t audioBytes[5] = {0, 0, 0, 0, 128};   // balance defaults to neutral
 static uint32_t lastAudioMs = 0;
 
 // One callback for every uint8_t knob.
@@ -52,8 +52,10 @@ public:
 class AudioCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
         std::string val = pCharacteristic->getValue();
+        // Accept a four-byte write too, leaving balance neutral, so a stale
+        // cached page degrades to "no colour drift" rather than to silence.
         if (val.length() >= 4) {
-            memcpy(audioBytes, val.data(), 4);
+            memcpy(audioBytes, val.data(), val.length() >= 5 ? 5 : 4);
             lastAudioMs = millis();
         }
     }
@@ -119,7 +121,7 @@ void initBLE() {
     addChar(pService, COLOR3_CHAR_UUID,     &color3Cb,     c3,                 3);
     addChar(pService, BPM_CHAR_UUID,        &bpmCb,        &currentBPM,        1);
     addChar(pService, COLORCOUNT_CHAR_UUID, &colorCountCb, &currentColorCount, 1);
-    addChar(pService, AUDIO_CHAR_UUID,      &audioCb,      audioBytes,         4);
+    addChar(pService, AUDIO_CHAR_UUID,      &audioCb,      audioBytes,         5);
     addChar(pService, HORNLEN_CHAR_UUID,    &hornLenCb,    &hornLen,           1);
 
     // Standard Battery Service rather than another custom UUID — clients that
@@ -174,12 +176,11 @@ uint8_t getHornLen() { return hornLen; }
 static float tilt = 0.0f;
 
 void updateAudioState() {
-    float b = getBassEnergy();
-    float h = getHighEnergy();
-    // Silence is not "all treble", and a dropped stream should not lurch the
-    // palette — hold the last tilt instead of snapping through the ramp.
-    if (b + h < 0.01f) return;
-    tilt += ((h - b) / (h + b) - tilt) * TILT_SMOOTHING;
+    // Hold rather than snap when the stream drops: silence is not a sudden
+    // change of texture, and a brief dropout should not lurch the palette.
+    if (millis() - lastAudioMs > AUDIO_STALE_MS) return;
+    float target = audioBytes[4] / 127.5f - 1.0f;   // 0..255 -> -1..+1
+    tilt += (target - tilt) * TILT_SMOOTHING;
 }
 
 float getTilt() { return tilt; }
