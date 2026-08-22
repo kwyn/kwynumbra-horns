@@ -97,5 +97,23 @@ int main() {
         printf("\n");
     }
 
+    // Spectrum with two colours. The whole point of running colour through
+    // tiltColor(): the ramp collapses to colour1 -> colour2 and the effect stays
+    // usable, where the old fixed-colour-per-zone version read colour 3 whether
+    // it was turned on or not.
+    g_colorCount = 2;
+    for (int frame = 0; frame < 40; frame++) {
+        g_now += 16;
+        g_bass = (frame % 8) / 8.0f;
+        g_mid  = (frame % 5) / 5.0f;
+        g_high = (frame % 3) / 3.0f;
+        for (uint16_t i = 0; i < NUM_LEDS; i++) leds[i] = CRGB::Black;
+        runEffect(EFFECT_SPECTRUM, leds, NUM_LEDS);
+        printf("s2 f%02d ", frame);
+        for (uint16_t i = 0; i < NUM_LEDS; i++)
+            printf("%02x%02x%02x", leds[i].r, leds[i].g, leds[i].b);
+        printf("\n");
+    }
+
     return 0;
 }

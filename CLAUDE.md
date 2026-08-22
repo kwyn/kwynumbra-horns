@@ -108,6 +108,19 @@ to 79% saturation.
 - `golden.cpp` stubs the colour getters, so the golden test does **not** cover
   this path. Passing tests say nothing about gamma.
 
+## The colour ramp needs plateaus
+
+`tiltColor()` maps a position onto the user's palette, and every colour-reactive
+effect goes through it. `RAMP_HOLD` is not decoration: a straight linear ramp
+puts colour 1 on exactly one pixel and colour 3 on exactly one pixel, so the
+colours actually chosen in the app are never visible and the strip reads as
+mush. Holding each stop flat for part of its segment brings pure-palette pixels
+from 3 of 53 up to 27 of 53 at the current value.
+
+The ends inherently hold less than the middle — the middle stop gets a plateau
+from both adjoining segments, the ends only from one. Raising `RAMP_HOLD` past
+about 0.35 stops helping the ends and only fattens the middle.
+
 ## Segmented and smooth are both modes
 
 Spectrum and Flow read the same three bands and differ only in whether the

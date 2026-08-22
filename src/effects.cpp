@@ -19,6 +19,18 @@ static void advancePhase(float& phase, unsigned long& lastFrame,
     lastFrame = now;
 }
 
+// How much of each half of the ramp holds a pure colour before blending starts.
+//
+// A straight linear ramp puts colour 1 on exactly one pixel and colour 3 on
+// exactly one pixel; everything between is an intermediate, so the colours
+// actually chosen in the app are never really visible and the strip reads as
+// mush. Holding each stop for a stretch makes the palette legible again, and
+// the blends read as transitions between colours rather than as the whole
+// point.
+// ponytail: feel knob, valid 0 to just under 0.5. 0 is a pure linear ramp;
+// approaching 0.5 gives hard stops with no blending at all.
+constexpr float RAMP_HOLD = 0.35f;
+
 // Position along the palette the user picked, from spectral tilt: -1 lands on
 // colour 1, 0 on colour 2, +1 on colour 3. Tilt never invents a hue — doing
 // that would fight the colour picker — it only slides along the chosen ramp,
@@ -28,13 +40,22 @@ static CRGB tiltColor(float tilt) {
     if (t < 0.0f) t = 0.0f;
     if (t > 1.0f) t = 1.0f;
 
+    CRGB from, to;
+    float frac;
     if (getColorCount() < 3) {
-        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 255.0f));
+        from = getColor1(); to = getColor2(); frac = t;
+    } else if (t < 0.5f) {
+        from = getColor1(); to = getColor2(); frac = t * 2.0f;
+    } else {
+        from = getColor2(); to = getColor3(); frac = (t - 0.5f) * 2.0f;
     }
-    if (t < 0.5f) {
-        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 2.0f * 255.0f));
-    }
-    return blend(getColor2(), getColor3(), static_cast<uint8_t>((t - 0.5f) * 2.0f * 255.0f));
+
+    // Flat at each end of the segment, linear across the middle.
+    frac = (frac - RAMP_HOLD) / (1.0f - 2.0f * RAMP_HOLD);
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+
+    return blend(from, to, static_cast<uint8_t>(frac * 255.0f));
 }
 
 // --- Rainbow (BPM-synced scroll) ---
@@ -140,13 +161,20 @@ static void effectBassPulse(CRGB* leds, uint16_t numLeds) {
     fill_solid(leds, numLeds, color);
 }
 
-// --- Spectrum (sound-reactive, 3 hard colour zones) ---
-// Deliberately stepped. Flow below is the smooth reading of the same three
-// bands; the hard boundaries here make each band legible on its own, which is
-// the useful thing when you want to see what the audio is doing rather than
-// feel it.
+// --- Spectrum (sound-reactive, 3 stepped zones over one colour ramp) ---
+// Brightness is stepped and colour is continuous. Each band still owns a third
+// of the strip, so it stays legible on its own — that is what Spectrum is for,
+// and Flow below is the version that smooths intensity too.
+//
+// Colour runs as one gradient from the first selected colour to the last rather
+// than a fixed colour per zone. Two reasons beyond it looking better: a
+// two-colour palette now works here at all, and the zones no longer read as
+// three unrelated blocks that happen to share a strip.
+//
+// Going through tiltColor() means the colour count is respected for free. The
+// old fixed-colour-per-zone version read colour 3 unconditionally, so turning
+// it off in the app did nothing to this effect.
 static void effectSpectrum(CRGB* leds, uint16_t numLeds) {
-    const CRGB colors[3] = { getColor1(), getColor2(), getColor3() };
     const float energy[3] = { getBassEnergy(), getMidEnergy(), getHighEnergy() };
 
     for (uint8_t z = 0; z < 3; z++) {
@@ -154,8 +182,10 @@ static void effectSpectrum(CRGB* leds, uint16_t numLeds) {
         uint16_t end   = (numLeds * (z + 1)) / 3;
         uint8_t bright = static_cast<uint8_t>(energy[z] * 255.0f);
         for (uint16_t i = start; i < end; i++) {
-            leds[i] = colors[z];
-            leds[i].fadeToBlackBy(255 - bright);
+            float p = (numLeds > 1) ? static_cast<float>(i) / (numLeds - 1) : 0.0f;
+            CRGB c = tiltColor(p * 2.0f - 1.0f);   // -1..+1 walks the whole ramp
+            c.nscale8_video(bright);
+            leds[i] = c;
         }
     }
 }
