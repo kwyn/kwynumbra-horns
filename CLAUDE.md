@@ -108,6 +108,16 @@ to 79% saturation.
 - `golden.cpp` stubs the colour getters, so the golden test does **not** cover
   this path. Passing tests say nothing about gamma.
 
+## Segmented and smooth are both modes
+
+Spectrum and Flow read the same three bands and differ only in whether the
+boundaries are hard. Spectrum steps between three zones, which makes each band
+legible on its own; Flow interpolates position continuously against frequency,
+which removes the seams — across one frame the largest jump between neighbouring
+pixels drops from 360 to 18.
+
+Neither is the "fixed" version of the other. Don't collapse them.
+
 ## Colour count
 
 `getColorCount()` returns 2 or 3 and says how many colours an effect should

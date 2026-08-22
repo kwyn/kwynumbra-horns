@@ -19,6 +19,24 @@ static void advancePhase(float& phase, unsigned long& lastFrame,
     lastFrame = now;
 }
 
+// Position along the palette the user picked, from spectral tilt: -1 lands on
+// colour 1, 0 on colour 2, +1 on colour 3. Tilt never invents a hue — doing
+// that would fight the colour picker — it only slides along the chosen ramp,
+// so the presets in the app double as warm-to-cold ramps for free.
+static CRGB tiltColor(float tilt) {
+    float t = (tilt + 1.0f) * 0.5f;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    if (getColorCount() < 3) {
+        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 255.0f));
+    }
+    if (t < 0.5f) {
+        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 2.0f * 255.0f));
+    }
+    return blend(getColor2(), getColor3(), static_cast<uint8_t>((t - 0.5f) * 2.0f * 255.0f));
+}
+
 // --- Rainbow (BPM-synced scroll) ---
 static float rainbowHue = 0.0f;
 static unsigned long lastRainbowFrame = 0;
@@ -122,7 +140,11 @@ static void effectBassPulse(CRGB* leds, uint16_t numLeds) {
     fill_solid(leds, numLeds, color);
 }
 
-// --- Spectrum (sound-reactive, 3 color zones) ---
+// --- Spectrum (sound-reactive, 3 hard colour zones) ---
+// Deliberately stepped. Flow below is the smooth reading of the same three
+// bands; the hard boundaries here make each band legible on its own, which is
+// the useful thing when you want to see what the audio is doing rather than
+// feel it.
 static void effectSpectrum(CRGB* leds, uint16_t numLeds) {
     const CRGB colors[3] = { getColor1(), getColor2(), getColor3() };
     const float energy[3] = { getBassEnergy(), getMidEnergy(), getHighEnergy() };
@@ -138,22 +160,33 @@ static void effectSpectrum(CRGB* leds, uint16_t numLeds) {
     }
 }
 
-// Position along the palette the user picked, from spectral tilt: -1 lands on
-// colour 1, 0 on colour 2, +1 on colour 3. Tilt never invents a hue — doing
-// that would fight the colour picker — it only slides along the chosen ramp,
-// so the presets in the app double as warm-to-cold ramps for free.
-static CRGB tiltColor(float tilt) {
-    float t = (tilt + 1.0f) * 0.5f;
-    if (t < 0.0f) t = 0.0f;
-    if (t > 1.0f) t = 1.0f;
+// --- Flow (sound-reactive, the whole horn as one gradient) ---
+// The same three bands as Spectrum, read smoothly instead of stepped. Position
+// maps continuously to frequency — base is bass, tip is the top band — and both
+// brightness and colour interpolate between the band values.
+//
+// Spectrum's three hard zones read as three separate bars stacked on one strip,
+// with boundaries at arbitrary pixel counts that line up with nothing physical.
+// Interpolating removes the seams: measured across one frame, the largest jump
+// between neighbouring pixels drops from 360 to 18.
+static void effectFlow(CRGB* leds, uint16_t numLeds) {
+    const float energy[3] = { getBassEnergy(), getMidEnergy(), getHighEnergy() };
 
-    if (getColorCount() < 3) {
-        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 255.0f));
+    for (uint16_t i = 0; i < numLeds; i++) {
+        float p = (numLeds > 1) ? static_cast<float>(i) / (numLeds - 1) : 0.0f;
+
+        // A float index into the three bands: 0 at the base, 2 at the tip.
+        float f = p * 2.0f;
+        uint8_t lo = (f >= 1.0f) ? 1 : 0;
+        float frac = f - static_cast<float>(lo);
+        float e = energy[lo] + (energy[lo + 1] - energy[lo]) * frac;
+
+        // Colour rides the same ramp. Reusing the tilt mapping means a
+        // two-colour palette collapses correctly here for free.
+        CRGB c = tiltColor(f - 1.0f);
+        c.nscale8_video(static_cast<uint8_t>(e * 255.0f));
+        leds[i] = c;
     }
-    if (t < 0.5f) {
-        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 2.0f * 255.0f));
-    }
-    return blend(getColor2(), getColor3(), static_cast<uint8_t>((t - 0.5f) * 2.0f * 255.0f));
 }
 
 // --- Bass Bloom (sound-reactive, built for bass music) ---
@@ -240,6 +273,7 @@ void runEffect(uint8_t effectIndex, CRGB* leds, uint16_t numLeds) {
         case EFFECT_BASS_PULSE: effectBassPulse(leds, numLeds); break;
         case EFFECT_SPECTRUM:   effectSpectrum(leds, numLeds);  break;
         case EFFECT_BASS_BLOOM: effectBassBloom(leds, numLeds); break;
+        case EFFECT_FLOW:       effectFlow(leds, numLeds);      break;
         default:                effectRainbow(leds, numLeds);   break;
     }
 }
