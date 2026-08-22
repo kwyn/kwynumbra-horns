@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mic spike</title>
+<!--
+  ponytail: THROWAWAY. Answers one question that can't be answered from a
+  desktop: does Bluefy (WKWebView) grant getUserMedia, and does the mic keep
+  working while a Web Bluetooth GATT connection is live? Delete once answered.
+
+  Standalone rather than folded into index.html so a failed experiment can't
+  destabilise the working controller.
+-->
+<style>
+  body { background:#111; color:#eee; font:16px/1.5 system-ui, sans-serif; padding:1.5rem; }
+  button { font:inherit; padding:.8rem 1.2rem; margin:.3rem 0; width:100%;
+           background:#333; color:#eee; border:1px solid #555; border-radius:8px; }
+  pre { background:#000; padding:1rem; border-radius:8px; white-space:pre-wrap;
+        font:14px/1.6 ui-monospace, monospace; }
+</style>
+
+<h1>Mic spike</h1>
+<button id="ble">1. Connect to horns</button>
+<button id="mic">2. Start mic</button>
+<pre id="out">ready</pre>
+
+<script>
+const SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
+const out = document.getElementById('out');
+const log = m => { out.textContent = m + '\n\n' + out.textContent; };
+
+document.getElementById('ble').onclick = async () => {
+  try {
+    const d = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] });
+    await d.gatt.connect();
+    log('BLE: connected to ' + d.name);
+  } catch (e) { log('BLE FAILED: ' + e.name + ' — ' + e.message); }
+};
+
+document.getElementById('mic').onclick = async () => {
+  try {
+    // The speech-tuned defaults fight bass content, so ask for the raw mic.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { autoGainControl: false, echoCancellation: false, noiseSuppression: false },
+    });
+    log('MIC: getUserMedia OK');
+
+    const track = stream.getAudioTracks()[0];
+    log('MIC: applied constraints ' + JSON.stringify(track.getSettings()));
+
+    const ctx = new AudioContext();
+    // iOS starts AudioContext suspended unless resumed inside a user gesture.
+    if (ctx.state === 'suspended') await ctx.resume();
+    log('MIC: AudioContext ' + ctx.state + ' @ ' + ctx.sampleRate + 'Hz');
+
+    const an = ctx.createAnalyser();
+    an.fftSize = 2048;
+    an.smoothingTimeConstant = 0;
+    ctx.createMediaStreamSource(stream).connect(an);
+
+    const bins = new Uint8Array(an.frequencyBinCount);
+    const avg = (a, b) => {
+      let s = 0;
+      for (let i = a; i <= b; i++) s += bins[i];
+      return Math.round(s / (b - a + 1));
+    };
+    // Live numbers, not just a permission check — a granted mic that reads all
+    // zeros is the failure mode worth catching here.
+    setInterval(() => {
+      an.getByteFrequencyData(bins);
+      out.textContent = `bass ${avg(1, 8)}  mid ${avg(9, 85)}  high ${avg(86, 341)}`
+        + '\n(should move when music plays)\n\n'
+        + out.textContent.split('\n\n').slice(1).join('\n\n');
+    }, 200);
+  } catch (e) { log('MIC FAILED: ' + e.name + ' — ' + e.message); }
+};
+</script>
