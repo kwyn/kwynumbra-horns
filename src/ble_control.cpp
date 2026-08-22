@@ -62,13 +62,13 @@ class AudioCallbacks : public NimBLECharacteristicCallbacks {
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         Serial.println("BLE client connected");
-        // Audio arrives ~25 times a second, and a write waits up to one
-        // connection interval. A slow interval shows up as jitter in the pulse
-        // rather than as clean latency, which is the part the eye notices.
-        // Units are 1.25ms, so this asks for 15–30ms. iOS clamps to its own
-        // limits, so treat it as a hint rather than a setting.
-        // ponytail: tuning knob. Widen it if the link gets flaky under load.
-        pServer->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 200);
+        // ponytail: do NOT request a connection-parameter update here. Asking
+        // for a faster interval to smooth the audio stream looks free, but iOS
+        // sends its own update on connect and the two collide in the
+        // controller: "assert llc_con_upd.c 292" and an immediate reboot, every
+        // single connection. Not worth it for an unmeasured jitter win that
+        // iOS clamps to its own limits anyway. If the stream ever visibly
+        // stutters, measure first, then try it deferred a second after connect.
     }
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
         Serial.printf("BLE client disconnected (reason=%d), restarting advertising\n", reason);
