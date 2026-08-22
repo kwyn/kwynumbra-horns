@@ -2,6 +2,7 @@
 #include "config.h"
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <cstring>
 
 static uint8_t currentEffect = EFFECT_RAINBOW;
 static uint8_t currentBrightness = MAX_BRIGHTNESS;
@@ -10,6 +11,12 @@ static CRGB color2 = CRGB(0, 206, 209);    // Cyber cyan
 static CRGB color3 = CRGB(255, 105, 180);  // Cyber hot pink
 static uint8_t currentBPM = DEFAULT_BPM;
 static uint8_t currentColorCount = 3;
+
+// [kick, bass, mid, high] as written by the phone, plus when it last arrived.
+// Starting the timestamp at 0 makes the staleness check below correct from boot
+// for free — before the first write, the audio is (correctly) silence.
+static uint8_t audioBytes[4] = {0, 0, 0, 0};
+static uint32_t lastAudioMs = 0;
 
 // One callback for every uint8_t knob.
 // ponytail: clamps out-of-range writes instead of ignoring them — replaces three
@@ -41,9 +48,26 @@ public:
     }
 };
 
+class AudioCallbacks : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
+        std::string val = pCharacteristic->getValue();
+        if (val.length() >= 4) {
+            memcpy(audioBytes, val.data(), 4);
+            lastAudioMs = millis();
+        }
+    }
+};
+
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         Serial.println("BLE client connected");
+        // Audio arrives ~25 times a second, and a write waits up to one
+        // connection interval. A slow interval shows up as jitter in the pulse
+        // rather than as clean latency, which is the part the eye notices.
+        // Units are 1.25ms, so this asks for 15–30ms. iOS clamps to its own
+        // limits, so treat it as a hint rather than a setting.
+        // ponytail: tuning knob. Widen it if the link gets flaky under load.
+        pServer->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 200);
     }
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
         Serial.printf("BLE client disconnected (reason=%d), restarting advertising\n", reason);
@@ -58,14 +82,18 @@ static ByteCallbacks colorCountCb(&currentColorCount, 2, 3);
 static ColorCallbacks color1Cb(&color1);
 static ColorCallbacks color2Cb(&color2);
 static ColorCallbacks color3Cb(&color3);
+static AudioCallbacks audioCb;
 static ServerCallbacks serverCb;
 static NimBLECharacteristic* batteryChar = nullptr;
 
 static void addChar(NimBLEService* svc, const char* uuid,
                     NimBLECharacteristicCallbacks* cb,
                     const uint8_t* initial, size_t len) {
+    // WRITE_NR lets a client skip the round-trip acknowledgement. The audio
+    // stream needs it — a with-response write per frame queues up and chokes —
+    // and granting it to every knob is simpler than a second helper.
     auto* c = svc->createCharacteristic(
-        uuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+        uuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     c->setCallbacks(cb);
     c->setValue(initial, len);
 }
@@ -89,6 +117,7 @@ void initBLE() {
     addChar(pService, COLOR3_CHAR_UUID,     &color3Cb,     c3,                 3);
     addChar(pService, BPM_CHAR_UUID,        &bpmCb,        &currentBPM,        1);
     addChar(pService, COLORCOUNT_CHAR_UUID, &colorCountCb, &currentColorCount, 1);
+    addChar(pService, AUDIO_CHAR_UUID,      &audioCb,      audioBytes,         4);
 
     // Standard Battery Service rather than another custom UUID — clients that
     // already speak BLE get the gauge for free.
@@ -115,11 +144,21 @@ uint8_t getCurrentBrightness() { return currentBrightness; }
 // Stored raw so the characteristic reads back exactly what the app wrote — the
 // picker would otherwise drift darker on every reconnect. Correction happens
 // here, on the way to the LEDs.
-//
-// applyGamma_video maps 0 to 0, so an all-black colour 3 still reads as the
-// two-colour-chase signal.
 CRGB getColor1() { return applyGamma_video(color1, COLOR_GAMMA); }
 CRGB getColor2() { return applyGamma_video(color2, COLOR_GAMMA); }
 CRGB getColor3() { return applyGamma_video(color3, COLOR_GAMMA); }
 uint8_t getBPM() { return currentBPM; }
 uint8_t getColorCount() { return currentColorCount; }
+
+// Stale audio reads as silence rather than holding the last frame. A phone that
+// disconnects, backgrounds or locks would otherwise leave a sound-reactive
+// effect stuck lit, which looks like a crash rather than like silence.
+static float energy(uint8_t i) {
+    if (millis() - lastAudioMs > AUDIO_STALE_MS) return 0.0f;
+    return audioBytes[i] / 255.0f;
+}
+
+float getKick()       { return energy(0); }
+float getBassEnergy() { return energy(1); }
+float getMidEnergy()  { return energy(2); }
+float getHighEnergy() { return energy(3); }

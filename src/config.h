@@ -8,10 +8,16 @@ constexpr uint8_t LED_PIN = 4;
 constexpr uint16_t NUM_LEDS = 60;
 constexpr uint8_t MAX_BRIGHTNESS = 128; // Cap for power budget (50%)
 
-// Mic — none on this board yet, see audio.cpp. Rate/size kept because the FFT
-// bin math in analyzeFrequencies() is calibrated against them.
-constexpr uint32_t SAMPLE_RATE = 16000;
-constexpr uint16_t FFT_SAMPLES = 2048;
+// Audio — analysed on the phone and streamed in over BLE. The board does no
+// DSP of its own. A 2048-point double-precision FFT does not fit in a 60fps
+// render loop on an S3: its FPU is single-precision only, so doubles are
+// software-emulated, and collecting 2048 samples at 16kHz costs 128ms before
+// any maths starts. The phone has a hardware-accelerated FFT sitting idle.
+//
+// Past this long with no write, the energies read zero. Load-bearing: without
+// it a phone that disconnects, backgrounds or locks freezes the strip on
+// whatever it was showing, and a sound-reactive effect holds solid.
+constexpr uint32_t AUDIO_STALE_MS = 500;
 
 // Battery — T-Energy S3 wires the 18650 to IO3 through a 1:2 divider. While
 // USB-C is plugged in this reads the charger rail, not the cell.
@@ -41,6 +47,8 @@ constexpr const char* BPM_CHAR_UUID        = "19b10006-e8f2-537e-4f6c-d104768a12
 // sending black as colour 3 to mean "two colours", which made an intentionally
 // black segment unreachable and silently blanked the spectrum effect's top zone.
 constexpr const char* COLORCOUNT_CHAR_UUID = "19b10007-e8f2-537e-4f6c-d104768a1214";
+// Four bytes: kick, bass, mid, high. Written ~25Hz by the phone.
+constexpr const char* AUDIO_CHAR_UUID      = "19b10008-e8f2-537e-4f6c-d104768a1214";
 
 // Colour pipeline
 // Colours arrive as screen hex — sRGB, gamma-encoded. WS2812s are near-linear

@@ -4,7 +4,6 @@
 #include "config.h"
 #include "effects.h"
 #include "ble_control.h"
-#include "audio.h"
 #include "battery.h"
 
 static CRGB leds[NUM_LEDS];
@@ -36,7 +35,6 @@ void setup() {
     FastLED.clear(true);
 
     initBLE();
-    initAudio();
     checkBattery();   // before lighting up, so a flat cell never gets loaded
 
     Serial.println("Kwynumbra ready");
@@ -50,12 +48,6 @@ void loop() {
     }
 
     uint8_t effect = getCurrentEffect();
-
-    // Only sample audio for sound-reactive effects
-    if (effectIsSoundReactive(effect)) {
-        sampleAudio();
-        analyzeFrequencies();
-    }
 
     FastLED.setBrightness(getCurrentBrightness());
     runEffect(effect, leds, NUM_LEDS);

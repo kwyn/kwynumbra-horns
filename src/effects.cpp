@@ -1,6 +1,5 @@
 #include "effects.h"
 #include "config.h"
-#include "audio.h"
 #include "ble_control.h"
 
 // Advances `phase` at a BPM-derived rate and wraps it at `wrap`.
@@ -117,10 +116,6 @@ static void effectSpectrum(CRGB* leds, uint16_t numLeds) {
 }
 
 // --- Public API ---
-
-bool effectIsSoundReactive(uint8_t effectIndex) {
-    return effectIndex == EFFECT_BASS_PULSE || effectIndex == EFFECT_SPECTRUM;
-}
 
 void runEffect(uint8_t effectIndex, CRGB* leds, uint16_t numLeds) {
     switch (effectIndex) {

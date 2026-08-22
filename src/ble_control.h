@@ -18,3 +18,16 @@ uint8_t getBPM();
 
 // 2 or 3 — how many of the colours above an effect should use.
 uint8_t getColorCount();
+
+// Audio analysis, computed on the phone and streamed in (0.0 – 1.0). All read
+// zero once the stream goes stale, so a dropped phone fades rather than
+// freezing — see AUDIO_STALE_MS.
+//
+// getKick() is a bass *onset*, not a bass level. Sustained sub (a reece, a
+// wobble) holds getBassEnergy() high for a whole drop while the kick is still
+// a series of distinct hits; driving brightness from the level reads as "bright
+// the entire time" with no beat visible at all.
+float getKick();
+float getBassEnergy();
+float getMidEnergy();
+float getHighEnergy();
