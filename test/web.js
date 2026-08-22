@@ -142,6 +142,50 @@ function play(track, frames, loudDb, quietDb) {
   console.log(`PASS - a 1.5dB top band still registers (${peakLevel[2].toFixed(2)}) beside a 30dB bass (${peakLevel[0].toFixed(2)})`);
 }
 
+{
+  // Flicker: the strip was jumping frame to frame because raw FFT magnitudes
+  // do. Feed a steady level with per-frame hash noise on it and compare how
+  // much the enveloped output moves against the unenveloped normalisation.
+  const track = api.makeBandTracker();
+  const noise = i => (((i * 2654435761) % 997) / 997 - 0.5) * 8;   // +/-4dB, deterministic
+  let prevNorm = null, prevLevel = null, dNorm = 0, dLevel = 0, n = 0;
+  for (let i = 0; i < 900; i++) {
+    const r = track(spectrum(-40 + noise(i), -55 + noise(i * 7), -70 + noise(i * 13)), 16);
+    if (i > 400) {   // let the floor/peak trackers settle first
+      if (prevNorm !== null) {
+        dNorm += Math.abs(r.norm[0] - prevNorm);
+        dLevel += Math.abs(r.level[0] - prevLevel);
+        n++;
+      }
+      prevNorm = r.norm[0];
+      prevLevel = r.level[0];
+    }
+  }
+  const jitterNorm = dNorm / n, jitterLevel = dLevel / n;
+  const ratio = jitterNorm / jitterLevel;
+  assert.ok(ratio > 3,
+    `envelope only cut jitter ${ratio.toFixed(1)}x (raw ${jitterNorm.toFixed(3)}, smoothed ${jitterLevel.toFixed(3)})`);
+  console.log(`PASS - envelope cuts frame-to-frame jitter ${ratio.toFixed(1)}x `
+    + `(${jitterNorm.toFixed(3)} -> ${jitterLevel.toFixed(3)} per frame)`);
+}
+
+{
+  // ...but it must not flatten a real change. A genuine jump has to arrive
+  // quickly, or smoothing has just traded flicker for lag.
+  const track = api.makeBandTracker();
+  for (let i = 0; i < 600; i++) track(spectrum(-70, -70, -85), 16);   // quiet
+  let framesToRise = -1;
+  for (let i = 0; i < 60; i++) {
+    const r = track(spectrum(-35, -55, -75), 16);                    // drop hits
+    if (framesToRise < 0 && r.level[0] > 0.7) framesToRise = i;
+  }
+  // ~250ms. Levels only carry texture here; kick bypasses the envelope, so
+  // impact stays instant however slow this is. Budget set accordingly.
+  assert.ok(framesToRise >= 0 && framesToRise < 15,
+    `took ${framesToRise} frames to reach 70% — too slow, that is lag not smoothing`);
+  console.log(`PASS - a real level jump still lands in ${framesToRise} frames (~${framesToRise * 16}ms)`);
+}
+
 (async () => {
   // A burst of user actions while audio streams every frame — the collision
   // this gate exists to prevent.

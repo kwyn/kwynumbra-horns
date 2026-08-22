@@ -646,6 +646,19 @@ const GAIN_TAU_MS   = 8000;   // how fast a band's floor/peak forget a moment
 const MIN_SPAN      = 8;      // byte range a band must move before it counts as fully live
 const BALANCE_TAU_MS = 30000; // what "usual brightness" means; spans a set, not a track
 const BALANCE_RANGE  = 40;    // byte swing away from usual that reads as fully warm/cold
+// Envelope on the band levels. Raw FFT magnitudes jump tens of percent frame to
+// frame, and sent straight to the strip that reads as flicker rather than as
+// the music. Rise faster than it falls, the way a meter does — snapping up and
+// easing down looks like response, the reverse looks like lag.
+// ponytail: feel knobs. Raise the decay for a lazier, more liquid strip.
+const LEVEL_ATTACK_MS = 180;
+const LEVEL_DECAY_MS  = 400;
+// Below this a kick is noise, not a hit. Chase lifts instantly on whatever kick
+// value arrives, so a continuously twitching small value reads as flicker
+// rather than as a beat. Rescaled rather than hard-gated, so there is no cliff
+// at the boundary for a hit that hovers around it.
+// ponytail: feel knob. Raise it if only the hardest kicks should register.
+const KICK_GATE = 0.15;
 const BASS_TAU_MS   = 300;    // onset baseline; longer means only sharper hits count
 const TEMPO_HZ      = 50;     // fixed tempo-buffer rate, independent of rAF's wobble
 const TEMPO_SECONDS = 6;
@@ -673,6 +686,7 @@ let micStream = null, micCtx = null, micRAF = 0;
 function makeBandTracker() {
   const floors = [255, 255, 255];
   const peaks = [0, 0, 0];
+  const smoothed = [0, 0, 0];
   let balanceAvg = null;
 
   return function track(bins, dt) {
@@ -684,7 +698,7 @@ function makeBandTracker() {
       return sum / (hi - lo + 1);
     });
 
-    const level = raw.map((v, i) => {
+    const norm = raw.map((v, i) => {
       // Floor drops straight to a new quiet and creeps back up; peak jumps to a
       // new loud and decays back down. Between them is this band's own range,
       // wherever it happens to sit in absolute terms.
@@ -699,6 +713,15 @@ function makeBandTracker() {
       return confidence * Math.min(1, Math.max(0, (v - floors[i]) / span));
     });
 
+    // Enveloped for display. Kick is deliberately computed from norm rather
+    // than this, so smoothing the strip does not also blunt the transients.
+    const up = 1 - Math.exp(-dt / LEVEL_ATTACK_MS);
+    const down = 1 - Math.exp(-dt / LEVEL_DECAY_MS);
+    const level = norm.map((v, i) => {
+      smoothed[i] += (v - smoothed[i]) * (v > smoothed[i] ? up : down);
+      return smoothed[i];
+    });
+
     // Where the energy sits, in byte units that are already dB-mapped. Centred
     // on its own long-run average so it reads as "brighter or darker than this
     // room and this mic usually are" — an absolute would sit permanently
@@ -708,7 +731,7 @@ function makeBandTracker() {
     else balanceAvg += (balance - balanceAvg) * (1 - Math.exp(-dt / BALANCE_TAU_MS));
     const tilt = Math.max(-1, Math.min(1, (balance - balanceAvg) / BALANCE_RANGE));
 
-    return { raw, level, tilt };
+    return { raw, norm, level, tilt };
   };
 }
 
@@ -728,7 +751,10 @@ async function startListening() {
 
   const an = micCtx.createAnalyser();
   an.fftSize = 2048;
-  an.smoothingTimeConstant = 0;   // each signal below does its own smoothing
+  // Mild native smoothing across the bins themselves — roughly a one-frame
+  // average, enough to take the hash off the raw magnitudes without blunting a
+  // kick. The band envelope above does the rest.
+  an.smoothingTimeConstant = 0.5;
   // Narrowing the dB window is a gain control: it maps the same dB range onto
   // more bytes, so a band that moves only a few dB still produces a usable
   // span. Widening it would have been the intuitive fix and is exactly wrong —
@@ -775,15 +801,16 @@ async function startListening() {
 
     an.getByteFrequencyData(bins);
     const forget = Math.exp(-dt / GAIN_TAU_MS);
-    const { level: band, tilt } = bandTracker(bins, dt);
+    const { norm, level: band, tilt } = bandTracker(bins, dt);
 
     // Kick is a bass *onset*, not a bass level. Sustained sub — a reece, a
     // wobble — holds band[0] high for a whole drop, so only the rise above the
     // recent average is an actual hit.
-    bassSlow += (band[0] - bassSlow) * (1 - Math.exp(-dt / BASS_TAU_MS));
-    const flux = Math.max(0, band[0] - bassSlow);
+    bassSlow += (norm[0] - bassSlow) * (1 - Math.exp(-dt / BASS_TAU_MS));
+    const flux = Math.max(0, norm[0] - bassSlow);
     kickPeak = Math.max(flux, kickPeak * forget, 0.02);
-    const kick = Math.min(1, flux / kickPeak);
+    const kickRaw = Math.min(1, flux / kickPeak);
+    const kick = Math.max(0, (kickRaw - KICK_GATE) / (1 - KICK_GATE));
 
     out[0] = kick * 255;
     out[1] = band[0] * 255;

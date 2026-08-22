@@ -108,6 +108,26 @@ to 79% saturation.
 - `golden.cpp` stubs the colour getters, so the golden test does **not** cover
   this path. Passing tests say nothing about gamma.
 
+## Levels are smoothed, kick is not
+
+Raw FFT magnitudes jump tens of percent frame to frame. Sent straight to the
+strip that reads as flicker rather than as music, and it was: the analyser's
+`smoothingTimeConstant` was set to 0 with a comment claiming each signal did its
+own smoothing, but only kick and tilt ever did.
+
+The three band levels now go through an attack/decay envelope, which cuts
+frame-to-frame jitter about 4x. **Kick is deliberately computed from the
+unsmoothed values**, so smoothing the strip does not blunt the transients — that
+split is the whole reason the levels can afford to be slow. Roughly 200ms for a
+level to land is fine, because impact comes from kick, not from levels.
+
+`KICK_GATE` exists because chase lifts instantly on whatever kick arrives, so a
+small continuously-twitching value reads as flicker. It rescales rather than
+hard-gates, so a hit hovering at the boundary has no cliff to fall off.
+
+`test/web.js` measures both halves — jitter reduction and time-to-respond — so
+retuning one cannot silently wreck the other.
+
 ## The colour ramp needs plateaus
 
 `tiltColor()` maps a position onto the user's palette, and every colour-reactive
