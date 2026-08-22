@@ -32,14 +32,51 @@ Percent comes from a curve in `battery.h`, not a linear map — li-ion sits
 between 3.7V and 3.9V for most of its usable charge, so a straight line reads
 "half full" on a nearly dead pack.
 
-## Audio is stubbed
+## Audio comes from the phone
 
-`initAudio()` is a no-op and `sampleAudio()` writes zeros. The FFT and band
-math below it are real and tuned — keep them. `arduinoFFT` stays in `lib_deps`
-for that reason even though nothing currently feeds it.
+There is no DSP on the board and there should not be one. The old `audio.cpp`
+ran a 2048-point **double-precision** FFT inside the 60fps render loop; the
+S3's FPU is single-precision only, so doubles are software-emulated, and just
+collecting 2048 samples at 16kHz costs 128ms. That design would have dropped
+the sound-reactive effects to single-digit fps the day a mic was attached. It
+was deleted, along with `arduinoFFT`, and took 32KB of RAM with it.
 
-`SAMPLE_RATE` and `FFT_SAMPLES` must not be changed casually: the bin ranges in
-`analyzeFrequencies()` are hand-calibrated against those exact values.
+The phone analyses the room and writes four bytes — `kick, bass, mid, high` —
+to `AUDIO_CHAR_UUID` at roughly 25Hz. `ble_control.cpp` is the whole receiving
+end.
+
+- **Stale audio reads as silence**, not as the last frame. Without
+  `AUDIO_STALE_MS` a phone that locks, backgrounds or wanders out of range
+  leaves a sound-reactive effect stuck lit, which reads as a crash. Don't
+  "optimise" the check away because the values look constant in a test.
+- **`getKick()` is an onset, not a level.** See the next section.
+- `updateAudioState()` must be called once per frame — it advances the slow
+  tilt EMA. Calling it from a getter instead would advance it once per *use*.
+- The web app must write with `writeValueWithoutResponse`, which is why
+  `addChar()` grants `WRITE_NR`. A with-response write per frame queues up and
+  chokes the link.
+
+## Level is not impact
+
+The rule that makes the sound-reactive effects work on bass music, and the one
+most likely to get undone by someone "simplifying" it.
+
+A reece, a wobble, a held sub — these keep `getBassEnergy()` pinned high for an
+entire drop while the kick is still a series of distinct hits. Drive brightness
+from the level and a dubstep track reads as *bright the whole time*, with no
+beat in it at all. `getKick()` is the rise above a ~300ms baseline, computed on
+the phone at audio rate because at 25Hz a transient is one or two samples and
+the derivative is mostly noise.
+
+Generally: **transients belong in brightness, sustained energy belongs in
+colour and texture.** The "tempo belongs in motion, never in brightness" rule
+above is the same rule — a slowly-varying quantity in brightness reads as
+flicker, whatever its source.
+
+Spectral tilt (`getTilt()`, -1 all sub to +1 all air) is the sustained half. It
+is smoothed over seconds deliberately, so it tracks the track rather than the
+moment, and it moves along the user's own colour ramp via `tiltColor()` rather
+than inventing hues — generating a hue would fight the colour picker.
 
 ## BPM-synced motion
 
@@ -71,17 +108,18 @@ to 79% saturation.
 - `golden.cpp` stubs the colour getters, so the golden test does **not** cover
   this path. Passing tests say nothing about gamma.
 
-## Two-colour chase
+## Colour count
 
-Sending **black as colour 3** means "two-colour chase" — `effectChase` drops to
-two segments. This rides on the existing colour characteristic rather than
-adding to the BLE protocol, at two costs worth knowing:
+`getColorCount()` returns 2 or 3 and says how many colours an effect should
+use. It replaced an older trick where **black as colour 3** was the signal,
+which cost two things: an intentionally black segment (a moving gap) was
+unreachable, and it silently blanked the high zone of the spectrum effect.
 
-- An intentionally black segment (a moving gap) is unreachable.
-- It also blanks the high zone of the spectrum effect. Moot while there's no
-  mic, but it will matter once one is attached.
+Don't reintroduce sentinel colours. Black is an ordinary colour now.
 
-Add a colour-count characteristic if either becomes a problem.
+`golden.cpp`'s two-colour block deliberately leaves colour 3 at a real value,
+so if `effectChase` ever starts reading `colors[2]` with a count of 2 the test
+catches it.
 
 ## Tests
 
@@ -103,8 +141,26 @@ silently win. If the tests behave oddly after a board change, delete the stale
 ## Web controller
 
 `web/index.html` is one self-contained file, hand-edited, no build step. Web
-Bluetooth requires a secure context, so `file://` silently fails — always serve
-it. Battery uses the standard `battery_service` / `battery_level` UUIDs, which
+Bluetooth **and `getUserMedia`** both require a secure context, so `file://`
+silently fails — always serve it. `localhost` counts as secure, so desktop
+Chrome over `python3 -m http.server` exercises the whole loop without a deploy.
+
+The mic is requested with `autoGainControl`, `echoCancellation` and
+`noiseSuppression` all **off**. Those defaults are tuned for speech; AGC in
+particular pumps sub against mids and flattens the spectral tilt to nothing.
+
+The BLE write for audio is guarded by an in-flight flag, which doubles as the
+rate limiter — Web Bluetooth queues writes, so driving them from `rAF`
+unguarded builds an unbounded backlog that surfaces minutes later as lag.
+
+Tempo detection searches 90–179 BPM. A range narrower than one octave *cannot*
+produce an octave error, which is autocorrelation's classic failure — 140 BPM
+confidently reported as 70. Don't widen it without replacing the mechanism.
+
+There is no linter or build step, so the check for this file is manual: extract
+the `<script>` block and evaluate its top level against DOM stubs. That catches
+undeclared identifiers and `getElementById` typos, which are otherwise only
+discoverable on the phone. Battery uses the standard `battery_service` / `battery_level` UUIDs, which
 must be listed in `optionalServices` on `requestDevice` or the read throws.
 
 Deployed by GitHub Pages from `main`, so a push is the deploy. Bluefy

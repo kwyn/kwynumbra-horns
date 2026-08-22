@@ -90,15 +90,37 @@ worker served as `text/plain` refuses to register.
 
 ## Effects
 
-`rainbow`, `chase`, `bass pulse`, `spectrum`. The last two are sound-reactive
-and currently sit dark — see below.
+`rainbow`, `chase`, `bass pulse`, `spectrum`, `bass bloom`. The last three are
+sound-reactive and need the phone listening — see below.
+
+`bass bloom` is the one built for bass music. The base of a horn is LED 0; each
+kick throws a pulse out toward the tip, sustained sub sets a glow underneath it,
+and the spectral balance of the track slides the colour along your chosen
+palette over several seconds.
 
 ## Audio
 
-There is no microphone on the T-Energy S3. `sampleAudio()` feeds silence, so the
-FFT runs on zeros and the two sound-reactive effects produce nothing. The band
-analysis in `audio.cpp` is intact and still calibrated; attaching a mic means
-rewriting `sampleAudio()` and nothing else.
+There is no microphone on the board, and there is not going to be one. **The
+phone is the microphone.** It is already paired to drive the horns, and the
+browser has a hardware-accelerated FFT sitting idle; the ESP32 has neither a
+double-precision FPU nor spare milliseconds in a 60fps render loop.
 
-Likely part: **INMP441** I2S MEMS mic on a long shielded lead, mic at the horns
-and the board at the battery pack.
+Tap **Listen** in the controller. The phone analyses the room and streams four
+bytes to the horns — kick, bass, mid, high — around 25 times a second, and
+detects tempo so the BPM-driven effects follow the track.
+
+Two things to know:
+
+- It only runs while the page is in the foreground. iOS suspends both the mic
+  and Web Bluetooth when the page backgrounds or the phone locks, so pocket
+  mode is out. The horns fade to their unlit state within half a second rather
+  than freezing on whatever they were showing.
+- The mic is requested with auto-gain, echo cancellation and noise suppression
+  **off**. Those defaults are tuned for speech and actively fight bass content.
+
+## Horn length
+
+`Horn length` in the controller sets how many LEDs from the base make up one
+horn, and `bass bloom` renders exactly that far. It is adjustable live because
+the strip has never been counted — drag it up, see where the light stops
+against the real tip, and that is your number.
