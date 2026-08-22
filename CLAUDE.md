@@ -155,6 +155,25 @@ The BLE write for audio is guarded by an in-flight flag, which doubles as the
 rate limiter — Web Bluetooth queues writes, so driving them from `rAF`
 unguarded builds an unbounded backlog that surfaces minutes later as lag.
 
+The band edges and `maxDecibels` are **measured, not derived**. Probed with
+`web/mictest.html` against real tracks through a phone mic in a room:
+
+    40Hz  -69dB  31dB of swing      2.5k  -95dB   4dB
+    630Hz -85dB  15dB               5k    -98dB   2dB   <- floored
+    1.25k -90dB  10dB              10k    -97dB   3dB   <- floored
+
+Everything above ~2.5kHz sits within a few dB of the analyser's floor — a phone
+mic, a room, and bass-heavy material leave nothing rhythmic up there. A textbook
+2–8kHz "high" band averages pure noise and reads as permanent silence, which
+also pins spectral tilt at -1 and kills the colour drift entirely. The usable
+brightness information is 630Hz–2.5kHz, roughly two octaves below where you
+would put it from theory.
+
+Narrowing `maxDecibels` is a **gain control**, and the direction is
+counter-intuitive: a *wider* dB window means *fewer bytes per dB*, and byte span
+is what the band tracker feeds on. Widening it to "capture more range" makes
+quiet bands worse. Re-run the probe if the mic or the venue changes.
+
 Tempo detection searches 90–179 BPM. A range narrower than one octave *cannot*
 produce an octave error, which is autocorrelation's classic failure — 140 BPM
 confidently reported as 70. Don't widen it without replacing the mechanism.

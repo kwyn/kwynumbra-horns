@@ -642,12 +642,30 @@ color3On.addEventListener('change', () => {
 // arrives; see CLAUDE.md for why the on-device FFT was dropped.
 
 // fftSize 2048 at 48kHz is ~23.4Hz per bin.
-const BANDS = [[1, 8], [9, 85], [86, 341]];   // bass 20-200Hz, mid 200-2k, high 2k-8k
+//
+// These are pitched far lower than a textbook bass/mid/treble split, and
+// deliberately so — measured with test/../web/mictest.html against real tracks
+// through a phone mic in a room:
+//
+//     region    peak      variation
+//     40Hz      -69dB       31dB
+//     630Hz     -85dB       15dB
+//     1.25k     -90dB       10dB
+//     2.5k      -95dB        4dB
+//     5k        -98dB        2dB     <- floored
+//     10k       -97dB        3dB     <- floored
+//
+// Everything above ~2.5kHz sits within a few dB of the analyser's floor: a
+// phone mic, a room, and bass-heavy material together leave nothing rhythmic up
+// there. A "high" band of 2-8kHz was averaging pure noise, which is why it read
+// as permanent silence. The usable brightness information is 630Hz-2.5kHz.
+// ponytail: measured, not derived. Re-run the probe if the mic or venue changes.
+const BANDS = [[1, 6], [7, 26], [27, 106]];   // 23-164Hz, 164-632Hz, 632-2.5kHz
 
 // ponytail: feel knobs, every one of them. Tune against real tracks on the
 // actual horns — a phone mic in a club is not a phone mic on a desk.
 const GAIN_TAU_MS   = 8000;   // how fast a band's floor/peak forget a moment
-const MIN_SPAN      = 12;     // byte range a band must move before it counts as live
+const MIN_SPAN      = 8;      // byte range a band must move before it counts as fully live
 const BALANCE_TAU_MS = 30000; // what "usual brightness" means; spans a set, not a track
 const BALANCE_RANGE  = 40;    // byte swing away from usual that reads as fully warm/cold
 const BASS_TAU_MS   = 300;    // onset baseline; longer means only sharper hits count
@@ -695,8 +713,12 @@ function makeBandTracker() {
       floors[i] = v < floors[i] ? v : floors[i] + (v - floors[i]) * settle;
       peaks[i] = v > peaks[i] ? v : peaks[i] - (peaks[i] - v) * settle;
       const span = peaks[i] - floors[i];
-      if (span < MIN_SPAN) return 0;   // band isn't moving; don't amplify hiss
-      return Math.min(1, Math.max(0, (v - floors[i]) / span));
+      if (span <= 0) return 0;
+      // Fade a barely-moving band in rather than gating it. A hard threshold
+      // makes a band snap between silent and fully live, and the measured spans
+      // sit close enough to it that a band would flicker across the boundary.
+      const confidence = Math.min(1, span / MIN_SPAN);
+      return confidence * Math.min(1, Math.max(0, (v - floors[i]) / span));
     });
 
     // Where the energy sits, in byte units that are already dB-mapped. Centred
@@ -729,6 +751,13 @@ async function startListening() {
   const an = micCtx.createAnalyser();
   an.fftSize = 2048;
   an.smoothingTimeConstant = 0;   // each signal below does its own smoothing
+  // Narrowing the dB window is a gain control: it maps the same dB range onto
+  // more bytes, so a band that moves only a few dB still produces a usable
+  // span. Widening it would have been the intuitive fix and is exactly wrong —
+  // more range means fewer bytes per dB, and span is what everything downstream
+  // feeds on. -50 keeps headroom above the -69dB peak measured in the room.
+  // ponytail: gain knob. Lower the top if it saturates at gig volume.
+  an.maxDecibels = -50;
   micCtx.createMediaStreamSource(micStream).connect(an);
 
   const bins = new Uint8Array(an.frequencyBinCount);

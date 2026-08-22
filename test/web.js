@@ -45,7 +45,7 @@ global.cancelAnimationFrame = () => {};
 // --- 1. Top level ----------------------------------------------------------
 let api;
 try {
-  api = new Function(js + '\nreturn { gattWrite, gattStream, makeBandTracker };')();
+  api = new Function(js + '\nreturn { gattWrite, gattStream, makeBandTracker, BANDS };')();
 } catch (err) {
   console.error(`FAIL - script top level threw ${err.constructor.name}: ${err.message}`);
   process.exit(1);
@@ -79,18 +79,14 @@ const ctrl = mkChar('ctrl'), audio = mkChar('audio');
 // getByteFrequencyData maps dB onto 0..255 across its default -100..-30 window.
 const dbToByte = db => Math.max(0, Math.min(255, Math.round(255 * (db + 100) / 70)));
 
-// A music-shaped spectrum. The high band deliberately rolls off toward 8kHz,
-// which is what made a single absolute floor swallow it whole.
+// Built from the app's own BANDS, so retuning them can't silently invalidate
+// these tests. Everything outside a band is floor.
 function spectrum(bassDb, midDb, highDb) {
-  const bins = new Uint8Array(1024);
-  for (let i = 0; i < 1024; i++) {
-    let db;
-    if (i <= 8) db = bassDb;
-    else if (i <= 85) db = midDb;
-    else if (i <= 341) db = highDb - ((i - 86) / 256) * 15;
-    else db = -95;
-    bins[i] = dbToByte(db);
-  }
+  const bins = new Uint8Array(1024).fill(dbToByte(-95));
+  [bassDb, midDb, highDb].forEach((db, b) => {
+    const [lo, hi] = api.BANDS[b];
+    for (let j = lo; j <= hi; j++) bins[j] = dbToByte(db);
+  });
   return bins;
 }
 
@@ -133,29 +129,17 @@ function play(track, frames, loudDb, quietDb) {
 }
 
 {
-  // The real-world case that failed: a hat is content in a handful of bins with
-  // dead air either side, not a broadband lift. A flat mean over 256 bins buries
-  // it; this asserts the high band still hears it.
-  function sparseHigh(hatOn) {
-    const bins = new Uint8Array(1024);
-    for (let i = 0; i < 1024; i++) {
-      let db = -95;
-      if (i <= 8) db = -32;                                  // constant heavy sub
-      else if (i <= 85) db = -50;
-      else if (i <= 341) db = hatOn && i >= 90 && i <= 130 ? -48 : -88;
-      bins[i] = dbToByte(db);
-    }
-    return bins;
-  }
+  // The measured reality: the top band moves only a few dB while bass swings
+  // 30. It still has to produce something — a band that reads exactly zero is
+  // how the whole texture feature came to be dead.
   const track = api.makeBandTracker();
-  let peakHigh = 0, last;
-  for (let i = 0; i < 600; i++) {
-    last = track(sparseHigh(i % 16 < 4), 16);
-    if (i > 500) peakHigh = Math.max(peakHigh, last.level[2]);
-  }
-  assert.ok(peakHigh > 0.5,
-    `sparse high content peaked at only ${peakHigh.toFixed(2)} — a hat in a few bins is invisible`);
-  console.log(`PASS - sparse high content registers (peak ${peakHigh.toFixed(2)})`);
+  // 1.5dB of swing, matching the 5-10kHz regions in the real measurement. That
+  // is under MIN_SPAN, so this is precisely the case a hard gate zeroed.
+  const { peakLevel } = play(track, 600, [-40, -60, -85.0], [-70, -75, -86.5]);
+  assert.ok(peakLevel[2] > 0.25,
+    `a 1.5dB-swinging top band produced only ${peakLevel[2].toFixed(2)} — a hard gate would zero it`);
+  assert.ok(peakLevel[0] > 0.5, `bass should be strong, got ${peakLevel[0].toFixed(2)}`);
+  console.log(`PASS - a 1.5dB top band still registers (${peakLevel[2].toFixed(2)}) beside a 30dB bass (${peakLevel[0].toFixed(2)})`);
 }
 
 (async () => {

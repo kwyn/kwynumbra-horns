@@ -43,7 +43,7 @@
 // out, so group them logarithmically before judging anything.
 const EDGES = [20, 40, 80, 160, 315, 630, 1250, 2500, 5000, 10000, 16000];
 // What the controller currently uses, shown alongside so the two can be compared.
-const APP_BANDS = [[1, 8, 'bass'], [9, 85, 'mid'], [86, 341, 'high']];
+const APP_BANDS = [[1, 6, 'bass'], [7, 26, 'mid'], [27, 106, 'high']];
 
 const el = id => document.getElementById(id);
 let stats = null, analyser = null, bins = null, binHz = 0;
@@ -63,6 +63,7 @@ el('start').onclick = async () => {
     analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0;
+    analyser.maxDecibels = -50;   // must match the controller or readings don't compare
     ctx.createMediaStreamSource(stream).connect(analyser);
 
     bins = new Uint8Array(analyser.frequencyBinCount);
