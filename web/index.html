@@ -101,6 +101,23 @@
     justify-content: center;
   }
   .bpm-btn:active { background: #333; }
+  /* Mic */
+  .mic-btn {
+    padding: 9px 18px;
+    border: 2px solid #333;
+    background: #1a1a1a;
+    color: #ccc;
+    border-radius: 10px;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .mic-btn.on { border-color: #9b59b6; background: #2a1a33; color: #fff; }
+  /* Live band levels. Without them a denied mic, a too-quiet room and a dead
+     BLE link are indistinguishable from across the room. */
+  .mic-meter { display: flex; align-items: flex-end; gap: 3px; height: 26px; }
+  .mic-meter i { width: 5px; height: 2px; background: #9b59b6; border-radius: 2px; }
+
   .bpm-value {
     font-size: 1.5em;
     font-weight: 700;
@@ -233,6 +250,15 @@
     </div>
   </div>
 
+  <!-- Mic: the phone listens and streams the analysis to the horns -->
+  <div class="bpm-row">
+    <span class="bpm-label">Listen</span>
+    <div class="bpm-controls">
+      <span class="mic-meter"><i id="mic-b"></i><i id="mic-m"></i><i id="mic-h"></i></span>
+      <button class="mic-btn" id="mic-btn">Off</button>
+    </div>
+  </div>
+
   <!-- Color Presets -->
   <div class="presets-grid">
     <button class="preset-btn" data-preset="trans">
@@ -313,6 +339,7 @@ const COLOR2_CHAR_UUID     = '19b10004-e8f2-537e-4f6c-d104768a1214';
 const COLOR3_CHAR_UUID     = '19b10005-e8f2-537e-4f6c-d104768a1214';
 const BPM_CHAR_UUID        = '19b10006-e8f2-537e-4f6c-d104768a1214';
 const COLORCOUNT_CHAR_UUID = '19b10007-e8f2-537e-4f6c-d104768a1214';
+const AUDIO_CHAR_UUID      = '19b10008-e8f2-537e-4f6c-d104768a1214';
 
 const PRESETS = {
   trans:  ['#F5A9B8', '#5BCEFA', '#FFFFFF'],
@@ -327,6 +354,7 @@ let color2Char = null;
 let color3Char = null;
 let bpmChar = null;
 let colorCountChar = null;
+let audioChar = null;
 
 const connectBtn = document.getElementById('connect-btn');
 const controls = document.getElementById('controls');
@@ -347,6 +375,9 @@ const effectBtns = document.querySelectorAll('.effect-btn');
 const presetBtns = document.querySelectorAll('.preset-btn');
 
 let currentBPM = 128;
+// Cleared by the manual +/- buttons so tempo detection can't fight a deliberate
+// nudge; toggling Listen back on re-arms it.
+let autoBPM = true;
 
 function setStatus(msg) { status.textContent = msg; }
 
@@ -422,6 +453,7 @@ connectBtn.addEventListener('click', async () => {
     color3Char = await service.getCharacteristic(COLOR3_CHAR_UUID);
     bpmChar = await service.getCharacteristic(BPM_CHAR_UUID);
     colorCountChar = await service.getCharacteristic(COLORCOUNT_CHAR_UUID);
+    audioChar = await service.getCharacteristic(AUDIO_CHAR_UUID);
 
     // Sync UI from device state
     const effectVal = (await effectChar.readValue()).getUint8(0);
@@ -500,6 +532,7 @@ brightnessSlider.addEventListener('input', async () => {
 
 // BPM
 bpmDown.addEventListener('click', () => {
+  autoBPM = false;
   if (currentBPM > 60) {
     currentBPM--;
     bpmVal.textContent = currentBPM;
@@ -507,6 +540,7 @@ bpmDown.addEventListener('click', () => {
   }
 });
 bpmUp.addEventListener('click', () => {
+  autoBPM = false;
   if (currentBPM < 200) {
     currentBPM++;
     bpmVal.textContent = currentBPM;
@@ -559,6 +593,193 @@ colorInputs.forEach((input, i) => {
 color3On.addEventListener('change', () => {
   colorInputs[2].disabled = !color3On.checked;
   writeColorCount(color3On.checked ? 3 : 2);
+});
+
+// --- Mic: the phone is the microphone ---------------------------------------
+// All the DSP lives here rather than on the board. The horns just render what
+// arrives; see CLAUDE.md for why the on-device FFT was dropped.
+
+// fftSize 2048 at 48kHz is ~23.4Hz per bin.
+const BANDS = [[1, 8], [9, 85], [86, 341]];   // bass 20-200Hz, mid 200-2k, high 2k-8k
+
+// ponytail: feel knobs, every one of them. Tune against real tracks on the
+// actual horns — a phone mic in a club is not a phone mic on a desk.
+const NOISE_FLOOR   = 60;     // raw bin level below which a band reads as silence
+const GAIN_TAU_MS   = 8000;   // how fast the loudness reference forgets a loud moment
+const BASS_TAU_MS   = 300;    // onset baseline; longer means only sharper hits count
+const TEMPO_HZ      = 50;     // fixed tempo-buffer rate, independent of rAF's wobble
+const TEMPO_SECONDS = 6;
+// A search range narrower than one octave cannot produce an octave error, which
+// is autocorrelation's classic failure mode — 140bpm confidently reported as 70.
+// This covers essentially all DJ music; manual +/- still reaches the full 60-200.
+const TEMPO_MIN = 90, TEMPO_MAX = 179;
+const TEMPO_MIN_SCORE = 0.004;   // below this, the room isn't carrying a beat
+
+let listening = false;
+let micStream = null, micCtx = null, micRAF = 0;
+
+const micBtn = document.getElementById('mic-btn');
+const micBars = ['mic-b', 'mic-m', 'mic-h'].map(id => document.getElementById(id));
+
+// Web Bluetooth queues writes. Driving them from rAF without a guard builds an
+// unbounded backlog that shows up minutes later as lag, so the in-flight flag
+// doubles as the rate limiter — it self-paces to whatever the link can carry.
+let writing = false;
+async function pushAudio(bytes) {
+  if (!audioChar || writing) return;
+  writing = true;
+  try {
+    // Without-response, because a per-frame round trip chokes at this rate.
+    if (audioChar.writeValueWithoutResponse) await audioChar.writeValueWithoutResponse(bytes);
+    else await audioChar.writeValue(bytes);
+  } catch (err) {
+    // Transient under load; the next frame carries fresher data anyway.
+  } finally {
+    writing = false;
+  }
+}
+
+async function startListening() {
+  // The speech-tuned defaults actively fight bass content — AGC in particular
+  // pumps sub against mids and flattens the spectral tilt into nothing.
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { autoGainControl: false, echoCancellation: false, noiseSuppression: false },
+  });
+
+  micCtx = new AudioContext();
+  // iOS hands back a suspended context unless it's resumed in a user gesture.
+  if (micCtx.state === 'suspended') await micCtx.resume();
+
+  const an = micCtx.createAnalyser();
+  an.fftSize = 2048;
+  an.smoothingTimeConstant = 0;   // each signal below does its own smoothing
+  micCtx.createMediaStreamSource(micStream).connect(an);
+
+  const bins = new Uint8Array(an.frequencyBinCount);
+  const peaks = [1, 1, 1];
+  const tempoBuf = new Float32Array(TEMPO_HZ * TEMPO_SECONDS);
+  const out = new Uint8Array(4);
+  let bassSlow = 0, kickPeak = 0.02;
+  let tempoIdx = 0, tempoAcc = 0, tempoMax = 0;
+  let bpmGuess = 0, bpmRepeat = 0;
+  let lastT = 0, lastMeterT = 0, lastTempoT = 0;
+
+  // Lag range in buffer samples. Longer lag = slower tempo.
+  const lagMin = Math.floor(TEMPO_HZ * 60 / TEMPO_MAX);
+  const lagMax = Math.ceil(TEMPO_HZ * 60 / TEMPO_MIN);
+
+  function estimateBPM() {
+    const n = tempoBuf.length;
+    let bestLag = 0, bestScore = 0;
+    for (let lag = lagMin; lag <= lagMax; lag++) {
+      let sum = 0;
+      for (let i = 0; i < n - lag; i++) {
+        sum += tempoBuf[(tempoIdx + i) % n] * tempoBuf[(tempoIdx + i + lag) % n];
+      }
+      // Longer lags compare fewer pairs, so without this slow tempos can never win.
+      sum /= (n - lag);
+      if (sum > bestScore) { bestScore = sum; bestLag = lag; }
+    }
+    return bestScore < TEMPO_MIN_SCORE ? 0 : Math.round(TEMPO_HZ * 60 / bestLag);
+  }
+
+  function frame(t) {
+    micRAF = requestAnimationFrame(frame);
+    // Clamped: a backgrounded tab resumes with a huge dt that would otherwise
+    // slam every smoothed value straight to its target.
+    const dt = lastT ? Math.min(t - lastT, 100) : 16;
+    lastT = t;
+
+    an.getByteFrequencyData(bins);
+    const forget = Math.exp(-dt / GAIN_TAU_MS);
+
+    // Per-band level, auto-gained against a slowly-forgetting peak. This is the
+    // job the firmware's BASS_SCALE/MID_SCALE/HIGH_SCALE constants did by hand,
+    // except it retunes itself to the room instead of needing a rebuild.
+    const band = BANDS.map(([lo, hi], i) => {
+      let sum = 0;
+      for (let j = lo; j <= hi; j++) sum += bins[j];
+      const v = Math.max(0, sum / (hi - lo + 1) - NOISE_FLOOR);
+      peaks[i] = Math.max(v, peaks[i] * forget, 1);
+      return v / peaks[i];
+    });
+
+    // Kick is a bass *onset*, not a bass level. Sustained sub — a reece, a
+    // wobble — holds band[0] high for a whole drop, so only the rise above the
+    // recent average is an actual hit.
+    bassSlow += (band[0] - bassSlow) * (1 - Math.exp(-dt / BASS_TAU_MS));
+    const flux = Math.max(0, band[0] - bassSlow);
+    kickPeak = Math.max(flux, kickPeak * forget, 0.02);
+    const kick = Math.min(1, flux / kickPeak);
+
+    out[0] = kick * 255;
+    out[1] = band[0] * 255;
+    out[2] = band[1] * 255;
+    out[3] = band[2] * 255;
+    pushAudio(out);
+
+    // Resample onsets to a fixed rate so autocorrelation sees an even timebase.
+    // Max rather than last, so a transient between samples isn't dropped.
+    tempoMax = Math.max(tempoMax, kick);
+    tempoAcc += dt;
+    while (tempoAcc >= 1000 / TEMPO_HZ) {
+      tempoAcc -= 1000 / TEMPO_HZ;
+      tempoBuf[tempoIdx++ % tempoBuf.length] = tempoMax;
+      tempoMax = 0;
+    }
+
+    if (autoBPM && t - lastTempoT > 500) {
+      lastTempoT = t;
+      const est = estimateBPM();
+      // Require the same answer a few times running — a single autocorrelation
+      // peak on a fill or a breakdown is not a tempo.
+      if (est && Math.abs(est - bpmGuess) <= 1) bpmRepeat++;
+      else { bpmGuess = est; bpmRepeat = 0; }
+      if (bpmRepeat >= 3 && Math.abs(est - currentBPM) >= 2) {
+        currentBPM = est;
+        bpmVal.textContent = est;
+        writeBPM(est);
+      }
+    }
+
+    if (t - lastMeterT > 80) {
+      lastMeterT = t;
+      micBars.forEach((el, i) => { el.style.height = (2 + band[i] * 22) + 'px'; });
+    }
+  }
+  micRAF = requestAnimationFrame(frame);
+}
+
+async function stopListening() {
+  cancelAnimationFrame(micRAF);
+  if (micStream) micStream.getTracks().forEach(tr => tr.stop());
+  if (micCtx) micCtx.close();
+  micStream = micCtx = null;
+  micBars.forEach(el => { el.style.height = '2px'; });
+  // The firmware's staleness timeout would catch this within half a second
+  // anyway, but an explicit zero makes "off" instant instead of a slow fade.
+  await pushAudio(new Uint8Array([0, 0, 0, 0]));
+}
+
+micBtn.addEventListener('click', async () => {
+  if (listening) {
+    listening = false;
+    micBtn.textContent = 'Off';
+    micBtn.classList.remove('on');
+    await stopListening();
+    return;
+  }
+  try {
+    // This click is the user gesture iOS requires to open an AudioContext.
+    await startListening();
+    listening = true;
+    autoBPM = true;   // re-enable tempo detection that a manual nudge switched off
+    micBtn.textContent = 'On';
+    micBtn.classList.add('on');
+    setStatus('');
+  } catch (err) {
+    setStatus('Mic: ' + err.name + ' — ' + err.message);
+  }
 });
 </script>
 
