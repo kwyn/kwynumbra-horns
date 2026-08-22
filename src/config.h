@@ -19,6 +19,14 @@ constexpr uint8_t MAX_BRIGHTNESS = 128; // Cap for power budget (50%)
 // whatever it was showing, and a sound-reactive effect holds solid.
 constexpr uint32_t AUDIO_STALE_MS = 500;
 
+// Spectral tilt is meant to track the *track*, not the moment — a dark rolling
+// section drifting one way, a bright break the other. Per-frame EMA weight, so
+// this is roughly an eight-second time constant at 60fps.
+// ponytail: feel knob. Raise it and the colour starts twitching per-beat.
+constexpr float TILT_SMOOTHING = 0.002f;
+
+constexpr uint8_t DEFAULT_HORN_LEDS = 30;
+
 // Battery — T-Energy S3 wires the 18650 to IO3 through a 1:2 divider. While
 // USB-C is plugged in this reads the charger rail, not the cell.
 constexpr uint8_t BATTERY_ADC_PIN = 3;
@@ -49,6 +57,10 @@ constexpr const char* BPM_CHAR_UUID        = "19b10006-e8f2-537e-4f6c-d104768a12
 constexpr const char* COLORCOUNT_CHAR_UUID = "19b10007-e8f2-537e-4f6c-d104768a1214";
 // Four bytes: kick, bass, mid, high. Written ~25Hz by the phone.
 constexpr const char* AUDIO_CHAR_UUID      = "19b10008-e8f2-537e-4f6c-d104768a1214";
+// How many LEDs from the base (LED 0) make up one horn. Adjustable at runtime
+// rather than compiled in, because the strip has never actually been counted —
+// drag it in the app, watch where the light stops, and that is the number.
+constexpr const char* HORNLEN_CHAR_UUID    = "19b10009-e8f2-537e-4f6c-d104768a1214";
 
 // Colour pipeline
 // Colours arrive as screen hex — sRGB, gamma-encoded. WS2812s are near-linear
@@ -60,11 +72,12 @@ constexpr const char* AUDIO_CHAR_UUID      = "19b10008-e8f2-537e-4f6c-d104768a12
 constexpr float COLOR_GAMMA = 2.2f;
 
 // Effects
-constexpr uint8_t NUM_EFFECTS = 4;
+constexpr uint8_t NUM_EFFECTS = 5;
 constexpr uint8_t EFFECT_RAINBOW    = 0;
 constexpr uint8_t EFFECT_CHASE      = 1;
 constexpr uint8_t EFFECT_BASS_PULSE = 2;
 constexpr uint8_t EFFECT_SPECTRUM   = 3;
+constexpr uint8_t EFFECT_BASS_BLOOM = 4;
 
 // BPM
 constexpr uint8_t DEFAULT_BPM = 128;

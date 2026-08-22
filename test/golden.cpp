@@ -24,13 +24,18 @@ extern "C" void yield(void) {}
 static CRGB g_c1(155, 89, 182), g_c2(0, 206, 209), g_c3(255, 105, 180);
 static uint8_t g_bpm = DEFAULT_BPM;
 static uint8_t g_colorCount = 3;
+static uint8_t g_hornLen = 30;
 static float g_bass = 0, g_mid = 0, g_high = 0;
+static float g_kick = 0, g_tilt = 0;
 
 CRGB getColor1() { return g_c1; }
 CRGB getColor2() { return g_c2; }
 CRGB getColor3() { return g_c3; }
 uint8_t getBPM() { return g_bpm; }
 uint8_t getColorCount() { return g_colorCount; }
+uint8_t getHornLen() { return g_hornLen; }
+float getKick() { return g_kick; }
+float getTilt() { return g_tilt; }
 float getBassEnergy() { return g_bass; }
 float getMidEnergy()  { return g_mid; }
 float getHighEnergy() { return g_high; }
@@ -45,6 +50,10 @@ int main() {
             g_bass = (frame % 8) / 8.0f;     // deterministic stand-in for mic input
             g_mid  = (frame % 5) / 5.0f;
             g_high = (frame % 3) / 3.0f;
+            // Periodic hits so bloom actually spawns pulses, and a full sweep
+            // of the tilt ramp so a change to tiltColor() shows up here.
+            g_kick = (frame % 7 == 0) ? 0.9f : 0.05f;
+            g_tilt = frame / 20.0f - 1.0f;
 
             for (uint16_t i = 0; i < NUM_LEDS; i++) leds[i] = CRGB::Black;
             runEffect(effect, leds, NUM_LEDS);

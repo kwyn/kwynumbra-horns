@@ -49,6 +49,8 @@ void loop() {
 
     uint8_t effect = getCurrentEffect();
 
+    updateAudioState();   // advances the slow spectral tilt; once per frame
+
     FastLED.setBrightness(getCurrentBrightness());
     runEffect(effect, leds, NUM_LEDS);
 

@@ -31,3 +31,11 @@ float getKick();
 float getBassEnergy();
 float getMidEnergy();
 float getHighEnergy();
+
+// Spectral tilt, -1 (all sub) to +1 (all air), smoothed over seconds. Advanced
+// by updateAudioState(), which must be called once per frame.
+float getTilt();
+void updateAudioState();
+
+// LEDs from the base of a horn to its tip.
+uint8_t getHornLen();

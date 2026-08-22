@@ -115,6 +115,103 @@ static void effectSpectrum(CRGB* leds, uint16_t numLeds) {
     }
 }
 
+// Position along the palette the user picked, from spectral tilt: -1 lands on
+// colour 1, 0 on colour 2, +1 on colour 3. Tilt never invents a hue — doing
+// that would fight the colour picker — it only slides along the chosen ramp,
+// so the presets in the app double as warm-to-cold ramps for free.
+static CRGB tiltColor(float tilt) {
+    float t = (tilt + 1.0f) * 0.5f;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    if (getColorCount() < 3) {
+        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 255.0f));
+    }
+    if (t < 0.5f) {
+        return blend(getColor1(), getColor2(), static_cast<uint8_t>(t * 2.0f * 255.0f));
+    }
+    return blend(getColor2(), getColor3(), static_cast<uint8_t>((t - 0.5f) * 2.0f * 255.0f));
+}
+
+// --- Bass Bloom (sound-reactive, built for bass music) ---
+// The base of a horn is LED 0. Each kick launches a pulse that travels out to
+// the tip and fades; sustained sub sets a background glow so a drop stays lit
+// between hits; spectral tilt colours the whole thing.
+//
+// Brightness comes from the *onset*, never from the level. This is the whole
+// point of the effect: a reece or a wobble holds getBassEnergy() high for a
+// full drop, so driving brightness from it reads as a constant glow with no
+// beat in it at all. getKick() is the rise above the recent average.
+constexpr uint8_t BLOOM_PULSES = 4;      // ponytail: fixed pool. Raise if fast rolls swallow pulses.
+// ponytail: feel knobs, all four. Tune against real tracks on the horns.
+constexpr float BLOOM_THRESHOLD = 0.35f; // kick level that counts as a hit
+constexpr float BLOOM_DECAY = 0.95f;     // per frame; a pulse should still be alive at the tip
+constexpr float BLOOM_WIDTH_MIN = 1.5f;  // half-width in LEDs with no mids present
+constexpr float BLOOM_WIDTH_MID = 4.0f;  // extra half-width at full mids — fatter patch, fatter pulse
+constexpr float BLOOM_GLOW = 0.35f;      // how brightly sustained sub sits under the pulses
+
+static struct { float pos; float energy; } bloomPulses[BLOOM_PULSES];
+static unsigned long lastBloomFrame = 0;
+static bool bloomArmed = true;
+
+static void effectBassBloom(CRGB* leds, uint16_t numLeds) {
+    uint16_t len = getHornLen();
+    if (len > numLeds) len = numLeds;
+
+    unsigned long now = millis();
+    float dt = (lastBloomFrame > 0) ? static_cast<float>(now - lastBloomFrame) : 0.0f;
+    lastBloomFrame = now;
+
+    float kick = getKick();
+    // Rising edge with hysteresis. Without it a kick that stays above the
+    // threshold for several frames spawns a pulse on every one of them, and a
+    // wobbling level retriggers continuously.
+    if (bloomArmed && kick >= BLOOM_THRESHOLD) {
+        uint8_t weakest = 0;
+        for (uint8_t i = 1; i < BLOOM_PULSES; i++) {
+            if (bloomPulses[i].energy < bloomPulses[weakest].energy) weakest = i;
+        }
+        bloomPulses[weakest].pos = 0.0f;
+        bloomPulses[weakest].energy = kick;
+        bloomArmed = false;
+    } else if (kick < BLOOM_THRESHOLD * 0.6f) {
+        bloomArmed = true;
+    }
+
+    CRGB color = tiltColor(getTilt());
+
+    // Background glow, so the strip does not go black between kicks on a track
+    // that is holding a wall of sub.
+    CRGB glow = color;
+    glow.fadeToBlackBy(255 - static_cast<uint8_t>(getBassEnergy() * BLOOM_GLOW * 255.0f));
+    fill_solid(leds, numLeds, CRGB::Black);
+    fill_solid(leds, len, glow);
+
+    // One horn-length per beat: tempo goes into motion, never into brightness.
+    float perMs = len * getBPM() / 60000.0f;
+    float halfWidth = BLOOM_WIDTH_MIN + getMidEnergy() * BLOOM_WIDTH_MID;
+
+    for (uint8_t p = 0; p < BLOOM_PULSES; p++) {
+        if (bloomPulses[p].energy <= 0.01f) continue;
+        bloomPulses[p].pos += perMs * dt;
+        bloomPulses[p].energy *= BLOOM_DECAY;
+
+        if (bloomPulses[p].pos - halfWidth > static_cast<float>(len)) {
+            bloomPulses[p].energy = 0.0f;   // off the tip, free the slot
+            continue;
+        }
+
+        for (uint16_t i = 0; i < len; i++) {
+            float d = fabsf(static_cast<float>(i) - bloomPulses[p].pos);
+            if (d >= halfWidth) continue;
+            float amt = (1.0f - d / halfWidth) * bloomPulses[p].energy;
+            CRGB add = color;
+            add.fadeToBlackBy(255 - static_cast<uint8_t>(amt * 255.0f));
+            leds[i] += add;   // saturating, so overlapping pulses just read brighter
+        }
+    }
+}
+
 // --- Public API ---
 
 void runEffect(uint8_t effectIndex, CRGB* leds, uint16_t numLeds) {
@@ -123,6 +220,7 @@ void runEffect(uint8_t effectIndex, CRGB* leds, uint16_t numLeds) {
         case EFFECT_CHASE:      effectChase(leds, numLeds);     break;
         case EFFECT_BASS_PULSE: effectBassPulse(leds, numLeds); break;
         case EFFECT_SPECTRUM:   effectSpectrum(leds, numLeds);  break;
+        case EFFECT_BASS_BLOOM: effectBassBloom(leds, numLeds); break;
         default:                effectRainbow(leds, numLeds);   break;
     }
 }

@@ -11,6 +11,7 @@ static CRGB color2 = CRGB(0, 206, 209);    // Cyber cyan
 static CRGB color3 = CRGB(255, 105, 180);  // Cyber hot pink
 static uint8_t currentBPM = DEFAULT_BPM;
 static uint8_t currentColorCount = 3;
+static uint8_t hornLen = DEFAULT_HORN_LEDS;
 
 // [kick, bass, mid, high] as written by the phone, plus when it last arrived.
 // Starting the timestamp at 0 makes the staleness check below correct from boot
@@ -79,6 +80,7 @@ static ByteCallbacks effectCb(&currentEffect, 0, NUM_EFFECTS - 1);
 static ByteCallbacks brightnessCb(&currentBrightness, 0, MAX_BRIGHTNESS);
 static ByteCallbacks bpmCb(&currentBPM, MIN_BPM, MAX_BPM);
 static ByteCallbacks colorCountCb(&currentColorCount, 2, 3);
+static ByteCallbacks hornLenCb(&hornLen, 1, NUM_LEDS);
 static ColorCallbacks color1Cb(&color1);
 static ColorCallbacks color2Cb(&color2);
 static ColorCallbacks color3Cb(&color3);
@@ -118,6 +120,7 @@ void initBLE() {
     addChar(pService, BPM_CHAR_UUID,        &bpmCb,        &currentBPM,        1);
     addChar(pService, COLORCOUNT_CHAR_UUID, &colorCountCb, &currentColorCount, 1);
     addChar(pService, AUDIO_CHAR_UUID,      &audioCb,      audioBytes,         4);
+    addChar(pService, HORNLEN_CHAR_UUID,    &hornLenCb,    &hornLen,           1);
 
     // Standard Battery Service rather than another custom UUID — clients that
     // already speak BLE get the gauge for free.
@@ -162,3 +165,21 @@ float getKick()       { return energy(0); }
 float getBassEnergy() { return energy(1); }
 float getMidEnergy()  { return energy(2); }
 float getHighEnergy() { return energy(3); }
+
+uint8_t getHornLen() { return hornLen; }
+
+// Where the energy sits in the spectrum, as one number: -1 is all sub, +1 all
+// air. Advanced here rather than inside getTilt() so that an effect calling the
+// getter twice in a frame doesn't advance it twice.
+static float tilt = 0.0f;
+
+void updateAudioState() {
+    float b = getBassEnergy();
+    float h = getHighEnergy();
+    // Silence is not "all treble", and a dropped stream should not lurch the
+    // palette — hold the last tilt instead of snapping through the ramp.
+    if (b + h < 0.01f) return;
+    tilt += ((h - b) / (h + b) - tilt) * TILT_SMOOTHING;
+}
+
+float getTilt() { return tilt; }
