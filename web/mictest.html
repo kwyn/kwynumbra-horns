@@ -1,76 +1,117 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mic spike</title>
+<title>Spectrum probe</title>
 <!--
-  ponytail: THROWAWAY. Answers one question that can't be answered from a
-  desktop: does Bluefy (WKWebView) grant getUserMedia, and does the mic keep
-  working while a Web Bluetooth GATT connection is live? Delete once answered.
-
-  Standalone rather than folded into index.html so a failed experiment can't
-  destabilise the working controller.
+  ponytail: DIAGNOSTIC, not part of the controller. Answers the question the
+  controller's three-bar meter cannot: where does the energy actually sit on
+  this phone, in this room, with this music, and how much does each region
+  MOVE? Span is the column that matters — a band that never moves carries no
+  information no matter how loud it reads.
 -->
 <style>
-  body { background:#111; color:#eee; font:16px/1.5 system-ui, sans-serif; padding:1.5rem; }
-  button { font:inherit; padding:.8rem 1.2rem; margin:.3rem 0; width:100%;
-           background:#333; color:#eee; border:1px solid #555; border-radius:8px; }
-  pre { background:#000; padding:1rem; border-radius:8px; white-space:pre-wrap;
-        font:14px/1.6 ui-monospace, monospace; }
+  body { background:#111; color:#eee; font:15px/1.45 system-ui, sans-serif; padding:1rem; margin:0; }
+  h1 { font-size:1.1em; margin:0 0 .6rem; }
+  button { font:inherit; padding:.7rem 1rem; margin:.2rem .2rem .2rem 0;
+           background:#222; color:#eee; border:1px solid #555; border-radius:8px; }
+  button.on { border-color:#9b59b6; background:#2a1a33; }
+  table { border-collapse:collapse; width:100%; margin-top:.7rem;
+          font:13px/1.5 ui-monospace, SFMono-Regular, monospace; }
+  th, td { padding:2px 4px; text-align:right; }
+  th { color:#777; font-weight:600; border-bottom:1px solid #333; }
+  td:first-child, th:first-child { text-align:left; color:#aaa; }
+  .bar { background:#9b59b6; height:9px; border-radius:2px; display:block; }
+  .dead td { color:#555; }
+  #note { color:#888; font-size:.82em; margin-top:.8rem; }
+  #err { color:#ff6b6b; }
 </style>
 
-<h1>Mic spike</h1>
-<button id="ble">1. Connect to horns</button>
-<button id="mic">2. Start mic</button>
-<pre id="out">ready</pre>
+<h1>Spectrum probe</h1>
+<button id="start">Start mic</button>
+<button id="reset">Reset min/max</button>
+<div id="err"></div>
+<div id="info"></div>
+<table id="tbl"></table>
+<div id="note">
+  <b>span</b> is the number that matters: how far a region moves between its
+  quietest and loudest. A region with a big <b>now</b> but a small span carries
+  no rhythm. Let a full track play, then read it.
+</div>
 
 <script>
-const SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
-const out = document.getElementById('out');
-const log = m => { out.textContent = m + '\n\n' + out.textContent; };
+// Octave-ish edges. Linear FFT bins are a terrible match for how music is laid
+// out, so group them logarithmically before judging anything.
+const EDGES = [20, 40, 80, 160, 315, 630, 1250, 2500, 5000, 10000, 16000];
+// What the controller currently uses, shown alongside so the two can be compared.
+const APP_BANDS = [[1, 8, 'bass'], [9, 85, 'mid'], [86, 341, 'high']];
 
-document.getElementById('ble').onclick = async () => {
-  try {
-    const d = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] });
-    await d.gatt.connect();
-    log('BLE: connected to ' + d.name);
-  } catch (e) { log('BLE FAILED: ' + e.name + ' — ' + e.message); }
-};
+const el = id => document.getElementById(id);
+let stats = null, analyser = null, bins = null, binHz = 0;
 
-document.getElementById('mic').onclick = async () => {
+function resetStats() { if (stats) stats.forEach(s => { s.min = 999; s.max = -1; }); }
+
+el('reset').onclick = resetStats;
+
+el('start').onclick = async () => {
   try {
-    // The speech-tuned defaults fight bass content, so ask for the raw mic.
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { autoGainControl: false, echoCancellation: false, noiseSuppression: false },
     });
-    log('MIC: getUserMedia OK');
-
-    const track = stream.getAudioTracks()[0];
-    log('MIC: applied constraints ' + JSON.stringify(track.getSettings()));
-
     const ctx = new AudioContext();
-    // iOS starts AudioContext suspended unless resumed inside a user gesture.
     if (ctx.state === 'suspended') await ctx.resume();
-    log('MIC: AudioContext ' + ctx.state + ' @ ' + ctx.sampleRate + 'Hz');
 
-    const an = ctx.createAnalyser();
-    an.fftSize = 2048;
-    an.smoothingTimeConstant = 0;
-    ctx.createMediaStreamSource(stream).connect(an);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0;
+    ctx.createMediaStreamSource(stream).connect(analyser);
 
-    const bins = new Uint8Array(an.frequencyBinCount);
-    const avg = (a, b) => {
-      let s = 0;
-      for (let i = a; i <= b; i++) s += bins[i];
-      return Math.round(s / (b - a + 1));
-    };
-    // Live numbers, not just a permission check — a granted mic that reads all
-    // zeros is the failure mode worth catching here.
-    setInterval(() => {
-      an.getByteFrequencyData(bins);
-      out.textContent = `bass ${avg(1, 8)}  mid ${avg(9, 85)}  high ${avg(86, 341)}`
-        + '\n(should move when music plays)\n\n'
-        + out.textContent.split('\n\n').slice(1).join('\n\n');
-    }, 200);
-  } catch (e) { log('MIC FAILED: ' + e.name + ' — ' + e.message); }
+    bins = new Uint8Array(analyser.frequencyBinCount);
+    binHz = ctx.sampleRate / analyser.fftSize;
+
+    const t = stream.getAudioTracks()[0].getSettings();
+    el('info').innerHTML =
+      `<div style="color:#888;font-size:.82em">` +
+      `${ctx.sampleRate}Hz &middot; ${binHz.toFixed(1)}Hz/bin &middot; ` +
+      `dB window ${analyser.minDecibels}..${analyser.maxDecibels}<br>` +
+      `AGC ${t.autoGainControl} &middot; NS ${t.noiseSuppression} &middot; EC ${t.echoCancellation}` +
+      `</div>`;
+
+    stats = [];
+    for (let i = 0; i < EDGES.length - 1; i++) {
+      stats.push({ label: EDGES[i] >= 1000 ? (EDGES[i] / 1000) + 'k' : String(EDGES[i]),
+                   lo: Math.max(1, Math.round(EDGES[i] / binHz)),
+                   hi: Math.round(EDGES[i + 1] / binHz), min: 999, max: -1 });
+    }
+    for (const [lo, hi, label] of APP_BANDS) {
+      stats.push({ label: '» ' + label, lo, hi, min: 999, max: -1, app: true });
+    }
+
+    el('start').textContent = 'Running';
+    el('start').classList.add('on');
+    requestAnimationFrame(tick);
+  } catch (e) {
+    el('err').textContent = e.name + ' — ' + e.message;
+  }
 };
+
+function tick() {
+  requestAnimationFrame(tick);
+  analyser.getByteFrequencyData(bins);
+
+  let html = '<tr><th>Hz</th><th>now</th><th>min</th><th>max</th><th>span</th><th></th></tr>';
+  for (const s of stats) {
+    let sum = 0, n = 0;
+    for (let j = s.lo; j <= s.hi && j < bins.length; j++) { sum += bins[j]; n++; }
+    const v = n ? Math.round(sum / n) : 0;
+    s.min = Math.min(s.min, v);
+    s.max = Math.max(s.max, v);
+    const span = s.max - s.min;
+    // Under ~12 the controller currently treats a band as not moving at all.
+    html += `<tr class="${span < 12 ? 'dead' : ''}">`
+      + `<td>${s.label}</td><td>${v}</td><td>${s.min === 999 ? '-' : s.min}</td>`
+      + `<td>${s.max < 0 ? '-' : s.max}</td><td><b>${span < 0 ? '-' : span}</b></td>`
+      + `<td style="width:35%"><span class="bar" style="width:${Math.round(v / 255 * 100)}%"></span></td></tr>`;
+  }
+  el('tbl').innerHTML = html;
+}
 </script>

@@ -132,6 +132,32 @@ function play(track, frames, loudDb, quietDb) {
   console.log(`PASS - tilt tracks spectral balance (bright ${bright.tilt.toFixed(2)}, dark ${dark.tilt.toFixed(2)})`);
 }
 
+{
+  // The real-world case that failed: a hat is content in a handful of bins with
+  // dead air either side, not a broadband lift. A flat mean over 256 bins buries
+  // it; this asserts the high band still hears it.
+  function sparseHigh(hatOn) {
+    const bins = new Uint8Array(1024);
+    for (let i = 0; i < 1024; i++) {
+      let db = -95;
+      if (i <= 8) db = -32;                                  // constant heavy sub
+      else if (i <= 85) db = -50;
+      else if (i <= 341) db = hatOn && i >= 90 && i <= 130 ? -48 : -88;
+      bins[i] = dbToByte(db);
+    }
+    return bins;
+  }
+  const track = api.makeBandTracker();
+  let peakHigh = 0, last;
+  for (let i = 0; i < 600; i++) {
+    last = track(sparseHigh(i % 16 < 4), 16);
+    if (i > 500) peakHigh = Math.max(peakHigh, last.level[2]);
+  }
+  assert.ok(peakHigh > 0.5,
+    `sparse high content peaked at only ${peakHigh.toFixed(2)} — a hat in a few bins is invisible`);
+  console.log(`PASS - sparse high content registers (peak ${peakHigh.toFixed(2)})`);
+}
+
 (async () => {
   // A burst of user actions while audio streams every frame — the collision
   // this gate exists to prevent.
