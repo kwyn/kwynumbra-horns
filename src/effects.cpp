@@ -48,6 +48,20 @@ static unsigned long lastChaseFrame = 0;
 // ponytail: calibration knob. Raise for a busier chase, halve for a lazier one.
 constexpr float CHASE_SEGMENTS_PER_BEAT = 1.0f;
 
+// Kick lift. This is the one case where audio may drive brightness: the rule
+// above bans *tempo* in brightness because a slowly-varying value there reads
+// as flicker. A transient is the opposite — it reads as impact, which is the
+// whole point.
+//
+// The strip drops to CHASE_FLOOR to leave headroom, so a kick lifts it to full
+// rather than washing it toward white. That only happens while a phone is
+// actually streaming; with no audio there is no kick coming, and dimming to
+// 55% forever would just make chase look broken.
+// ponytail: feel knobs. Lower the floor for a harder throb.
+constexpr float CHASE_FLOOR = 0.55f;
+constexpr float CHASE_LIFT_DECAY = 0.90f;
+static float chaseLift = 0.0f;
+
 static void effectChase(CRGB* leds, uint16_t numLeds) {
     CRGB colors[3] = { getColor1(), getColor2(), getColor3() };
 
@@ -61,6 +75,14 @@ static void effectChase(CRGB* leds, uint16_t numLeds) {
                  static_cast<float>(numLeds));
 
     float blendWidth = 4.0f;
+
+    // Attack instant, decay slow — a kick should snap the strip up and let it
+    // fall, not ramp into it.
+    float kick = getKick();
+    chaseLift = (kick > chaseLift) ? kick : chaseLift * CHASE_LIFT_DECAY;
+    uint8_t level = audioIsLive()
+        ? static_cast<uint8_t>((CHASE_FLOOR + (1.0f - CHASE_FLOOR) * chaseLift) * 255.0f)
+        : 255;
 
     for (uint16_t i = 0; i < numLeds; i++) {
         float patternPos = fmodf(static_cast<float>(i) + chasePos, static_cast<float>(numLeds));
@@ -78,6 +100,7 @@ static void effectChase(CRGB* leds, uint16_t numLeds) {
         } else {
             c = colors[seg];
         }
+        c.nscale8_video(level);   // _video so a dim chase never drops to black
         leds[i] = c;
     }
 }

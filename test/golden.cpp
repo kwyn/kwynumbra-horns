@@ -26,6 +26,7 @@ static uint8_t g_bpm = DEFAULT_BPM;
 static uint8_t g_colorCount = 3;
 static float g_bass = 0, g_mid = 0, g_high = 0;
 static float g_kick = 0, g_tilt = 0;
+static bool g_audioLive = false;
 
 CRGB getColor1() { return g_c1; }
 CRGB getColor2() { return g_c2; }
@@ -34,6 +35,7 @@ uint8_t getBPM() { return g_bpm; }
 uint8_t getColorCount() { return g_colorCount; }
 float getKick() { return g_kick; }
 float getTilt() { return g_tilt; }
+bool audioIsLive() { return g_audioLive; }
 float getBassEnergy() { return g_bass; }
 float getMidEnergy()  { return g_mid; }
 float getHighEnergy() { return g_high; }
@@ -79,5 +81,21 @@ int main() {
             printf("%02x%02x%02x", leds[i].r, leds[i].g, leds[i].b);
         printf("\n");
     }
+    // Chase with a phone streaming: the kick lifts the whole strip. Last, so it
+    // cannot perturb the blocks above — effects carry static position state
+    // across blocks, so an inserted block shifts everything after it.
+    g_colorCount = 3;
+    g_audioLive = true;
+    for (int frame = 0; frame < 40; frame++) {
+        g_now += 16;
+        g_kick = (frame % 7 == 0) ? 0.9f : 0.05f;
+        for (uint16_t i = 0; i < NUM_LEDS; i++) leds[i] = CRGB::Black;
+        runEffect(EFFECT_CHASE, leds, NUM_LEDS);
+        printf("ck f%02d ", frame);
+        for (uint16_t i = 0; i < NUM_LEDS; i++)
+            printf("%02x%02x%02x", leds[i].r, leds[i].g, leds[i].b);
+        printf("\n");
+    }
+
     return 0;
 }

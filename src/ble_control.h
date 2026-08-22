@@ -36,3 +36,9 @@ float getHighEnergy();
 // by updateAudioState(), which must be called once per frame.
 float getTilt();
 void updateAudioState();
+
+// Whether a phone is actually streaming right now. Effects that dim themselves
+// to leave headroom for a kick need this: with no audio there is no kick
+// coming, so they must render at full brightness rather than sit permanently
+// dark waiting for one.
+bool audioIsLive();

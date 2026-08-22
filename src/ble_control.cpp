@@ -179,3 +179,5 @@ void updateAudioState() {
 }
 
 float getTilt() { return tilt; }
+
+bool audioIsLive() { return millis() - lastAudioMs <= AUDIO_STALE_MS; }
