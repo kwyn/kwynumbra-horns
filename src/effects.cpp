@@ -155,9 +155,6 @@ static unsigned long lastBloomFrame = 0;
 static bool bloomArmed = true;
 
 static void effectBassBloom(CRGB* leds, uint16_t numLeds) {
-    uint16_t len = getHornLen();
-    if (len > numLeds) len = numLeds;
-
     unsigned long now = millis();
     float dt = (lastBloomFrame > 0) ? static_cast<float>(now - lastBloomFrame) : 0.0f;
     lastBloomFrame = now;
@@ -184,11 +181,10 @@ static void effectBassBloom(CRGB* leds, uint16_t numLeds) {
     // that is holding a wall of sub.
     CRGB glow = color;
     glow.fadeToBlackBy(255 - static_cast<uint8_t>(getBassEnergy() * BLOOM_GLOW * 255.0f));
-    fill_solid(leds, numLeds, CRGB::Black);
-    fill_solid(leds, len, glow);
+    fill_solid(leds, numLeds, glow);
 
     // One horn-length per beat: tempo goes into motion, never into brightness.
-    float perMs = len * getBPM() / 60000.0f;
+    float perMs = numLeds * getBPM() / 60000.0f;
     float halfWidth = BLOOM_WIDTH_MIN + getMidEnergy() * BLOOM_WIDTH_MID;
 
     for (uint8_t p = 0; p < BLOOM_PULSES; p++) {
@@ -196,12 +192,12 @@ static void effectBassBloom(CRGB* leds, uint16_t numLeds) {
         bloomPulses[p].pos += perMs * dt;
         bloomPulses[p].energy *= BLOOM_DECAY;
 
-        if (bloomPulses[p].pos - halfWidth > static_cast<float>(len)) {
+        if (bloomPulses[p].pos - halfWidth > static_cast<float>(numLeds)) {
             bloomPulses[p].energy = 0.0f;   // off the tip, free the slot
             continue;
         }
 
-        for (uint16_t i = 0; i < len; i++) {
+        for (uint16_t i = 0; i < numLeds; i++) {
             float d = fabsf(static_cast<float>(i) - bloomPulses[p].pos);
             if (d >= halfWidth) continue;
             float amt = (1.0f - d / halfWidth) * bloomPulses[p].energy;

@@ -5,7 +5,9 @@
 // LED strip — LilyGO T-Energy S3. Any free GPIO works; 4 is not a strapping
 // pin (0/3/45/46) and is clear of the flash/PSRAM and USB pins.
 constexpr uint8_t LED_PIN = 4;
-constexpr uint16_t NUM_LEDS = 60;
+// 53 per horn, measured. Both horns hang off IO4 in parallel — same data, so
+// they mirror in hardware and the firmware only ever renders one horn's worth.
+constexpr uint16_t NUM_LEDS = 53;
 constexpr uint8_t MAX_BRIGHTNESS = 128; // Cap for power budget (50%)
 
 // Audio — analysed on the phone and streamed in over BLE. The board does no
@@ -25,7 +27,6 @@ constexpr uint32_t AUDIO_STALE_MS = 500;
 // ponytail: feel knob. Raise it and the colour starts twitching per-beat.
 constexpr float TILT_SMOOTHING = 0.002f;
 
-constexpr uint8_t DEFAULT_HORN_LEDS = 30;
 
 // Battery — T-Energy S3 wires the 18650 to IO3 through a 1:2 divider. While
 // USB-C is plugged in this reads the charger rail, not the cell.
@@ -62,10 +63,6 @@ constexpr const char* COLORCOUNT_CHAR_UUID = "19b10007-e8f2-537e-4f6c-d104768a12
 // their own range, so comparing them answers "which band is busier", not
 // "where does the energy sit".
 constexpr const char* AUDIO_CHAR_UUID      = "19b10008-e8f2-537e-4f6c-d104768a1214";
-// How many LEDs from the base (LED 0) make up one horn. Adjustable at runtime
-// rather than compiled in, because the strip has never actually been counted —
-// drag it in the app, watch where the light stops, and that is the number.
-constexpr const char* HORNLEN_CHAR_UUID    = "19b10009-e8f2-537e-4f6c-d104768a1214";
 
 // Colour pipeline
 // Colours arrive as screen hex — sRGB, gamma-encoded. WS2812s are near-linear

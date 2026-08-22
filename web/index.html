@@ -242,16 +242,6 @@
     <input type="range" id="brightness" min="0" max="128" value="128">
   </div>
 
-  <!-- Horn length. Doubles as the measuring tool: drag it up and read off
-       where the light stops relative to the actual tip of the horn. -->
-  <div class="slider-row">
-    <div class="slider-label">
-      <span>Horn length</span>
-      <span id="horn-val">30</span>
-    </div>
-    <input type="range" id="horn-len" min="1" max="60" value="30">
-  </div>
-
   <!-- BPM -->
   <div class="bpm-row">
     <span class="bpm-label">BPM</span>
@@ -355,7 +345,6 @@ const COLOR3_CHAR_UUID     = '19b10005-e8f2-537e-4f6c-d104768a1214';
 const BPM_CHAR_UUID        = '19b10006-e8f2-537e-4f6c-d104768a1214';
 const COLORCOUNT_CHAR_UUID = '19b10007-e8f2-537e-4f6c-d104768a1214';
 const AUDIO_CHAR_UUID      = '19b10008-e8f2-537e-4f6c-d104768a1214';
-const HORNLEN_CHAR_UUID    = '19b10009-e8f2-537e-4f6c-d104768a1214';
 
 const PRESETS = {
   trans:  ['#F5A9B8', '#5BCEFA', '#FFFFFF'],
@@ -371,13 +360,10 @@ let color3Char = null;
 let bpmChar = null;
 let colorCountChar = null;
 let audioChar = null;
-let hornLenChar = null;
 
 const connectBtn = document.getElementById('connect-btn');
 const controls = document.getElementById('controls');
 const brightnessSlider = document.getElementById('brightness');
-const hornSlider = document.getElementById('horn-len');
-const hornVal_ = document.getElementById('horn-val');
 const brightnessVal = document.getElementById('brightness-val');
 const bpmVal = document.getElementById('bpm-val');
 const bpmDown = document.getElementById('bpm-down');
@@ -494,14 +480,12 @@ connectBtn.addEventListener('click', async () => {
     bpmChar = await service.getCharacteristic(BPM_CHAR_UUID);
     colorCountChar = await service.getCharacteristic(COLORCOUNT_CHAR_UUID);
     audioChar = await service.getCharacteristic(AUDIO_CHAR_UUID);
-    hornLenChar = await service.getCharacteristic(HORNLEN_CHAR_UUID);
 
     // Sync UI from device state
     const effectVal = (await effectChar.readValue()).getUint8(0);
     const brightVal = (await brightnessChar.readValue()).getUint8(0);
     const bpmVal2 = (await bpmChar.readValue()).getUint8(0);
     const countVal = (await colorCountChar.readValue()).getUint8(0);
-    const hornVal = (await hornLenChar.readValue()).getUint8(0);
 
     const c1 = await color1Char.readValue();
     const c2 = await color2Char.readValue();
@@ -512,8 +496,6 @@ connectBtn.addEventListener('click', async () => {
     });
     brightnessSlider.value = brightVal;
     brightnessVal.textContent = brightVal;
-    hornSlider.value = hornVal;
-    hornVal_.textContent = hornVal;
     currentBPM = bpmVal2;
     bpmVal.textContent = currentBPM;
 
@@ -563,13 +545,6 @@ brightnessSlider.addEventListener('input', () => {
   const val = parseInt(brightnessSlider.value);
   brightnessVal.textContent = val;
   gattWrite(brightnessChar, new Uint8Array([val]));
-});
-
-// Horn length
-hornSlider.addEventListener('input', () => {
-  const val = parseInt(hornSlider.value);
-  hornVal_.textContent = val;
-  gattWrite(hornLenChar, new Uint8Array([val]));
 });
 
 // BPM
