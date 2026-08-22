@@ -312,6 +312,7 @@ const COLOR1_CHAR_UUID     = '19b10003-e8f2-537e-4f6c-d104768a1214';
 const COLOR2_CHAR_UUID     = '19b10004-e8f2-537e-4f6c-d104768a1214';
 const COLOR3_CHAR_UUID     = '19b10005-e8f2-537e-4f6c-d104768a1214';
 const BPM_CHAR_UUID        = '19b10006-e8f2-537e-4f6c-d104768a1214';
+const COLORCOUNT_CHAR_UUID = '19b10007-e8f2-537e-4f6c-d104768a1214';
 
 const PRESETS = {
   trans:  ['#F5A9B8', '#5BCEFA', '#FFFFFF'],
@@ -325,6 +326,7 @@ let color1Char = null;
 let color2Char = null;
 let color3Char = null;
 let bpmChar = null;
+let colorCountChar = null;
 
 const connectBtn = document.getElementById('connect-btn');
 const controls = document.getElementById('controls');
@@ -364,6 +366,15 @@ async function writeColor(char, hex) {
   try {
     const [r, g, b] = hexToRgb(hex);
     await char.writeValue(new Uint8Array([r, g, b]));
+  } catch (err) {
+    setStatus('Write error: ' + err.message);
+  }
+}
+
+async function writeColorCount(n) {
+  if (!colorCountChar) return;
+  try {
+    await colorCountChar.writeValue(new Uint8Array([n]));
   } catch (err) {
     setStatus('Write error: ' + err.message);
   }
@@ -410,11 +421,13 @@ connectBtn.addEventListener('click', async () => {
     color2Char = await service.getCharacteristic(COLOR2_CHAR_UUID);
     color3Char = await service.getCharacteristic(COLOR3_CHAR_UUID);
     bpmChar = await service.getCharacteristic(BPM_CHAR_UUID);
+    colorCountChar = await service.getCharacteristic(COLORCOUNT_CHAR_UUID);
 
     // Sync UI from device state
     const effectVal = (await effectChar.readValue()).getUint8(0);
     const brightVal = (await brightnessChar.readValue()).getUint8(0);
     const bpmVal2 = (await bpmChar.readValue()).getUint8(0);
+    const countVal = (await colorCountChar.readValue()).getUint8(0);
 
     const c1 = await color1Char.readValue();
     const c2 = await color2Char.readValue();
@@ -430,12 +443,11 @@ connectBtn.addEventListener('click', async () => {
 
     colorInputs[0].value = rgbToHex(c1.getUint8(0), c1.getUint8(1), c1.getUint8(2));
     colorInputs[1].value = rgbToHex(c2.getUint8(0), c2.getUint8(1), c2.getUint8(2));
-    // Black means the device is already in two-color mode. Leave the picker's
-    // own value alone so re-enabling restores a real color rather than black.
-    const c3Off = c3.getUint8(0) === 0 && c3.getUint8(1) === 0 && c3.getUint8(2) === 0;
-    color3On.checked = !c3Off;
-    colorInputs[2].disabled = c3Off;
-    if (!c3Off) colorInputs[2].value = rgbToHex(c3.getUint8(0), c3.getUint8(1), c3.getUint8(2));
+    // Colour 3 keeps its real value on the wire whether or not it's in use, so
+    // the picker always restores to a real colour and the count says what's live.
+    colorInputs[2].value = rgbToHex(c3.getUint8(0), c3.getUint8(1), c3.getUint8(2));
+    color3On.checked = countVal === 3;
+    colorInputs[2].disabled = countVal !== 3;
 
     connectBtn.textContent = 'Connected';
     connectBtn.classList.add('connected');
@@ -530,6 +542,7 @@ presetBtns.forEach(btn => {
     await writeColor(color1Char, colors[0]);
     await writeColor(color2Char, colors[1]);
     await writeColor(color3Char, colors[2]);
+    await writeColorCount(3);
   });
 });
 
@@ -541,11 +554,11 @@ colorInputs.forEach((input, i) => {
   });
 });
 
-// Color 3 off = two-color chase. Black on the wire is the signal; the firmware
-// splits the strip into two segments instead of three.
+// Color 3 off = two-color chase. The count says how many colours are live;
+// colour 3 keeps its own value, so black is now just a colour you can pick.
 color3On.addEventListener('change', () => {
   colorInputs[2].disabled = !color3On.checked;
-  writeColor(color3Char, color3On.checked ? colorInputs[2].value : '#000000');
+  writeColorCount(color3On.checked ? 3 : 2);
 });
 </script>
 

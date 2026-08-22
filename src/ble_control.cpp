@@ -9,6 +9,7 @@ static CRGB color1 = CRGB(155, 89, 182);   // Cyber purple
 static CRGB color2 = CRGB(0, 206, 209);    // Cyber cyan
 static CRGB color3 = CRGB(255, 105, 180);  // Cyber hot pink
 static uint8_t currentBPM = DEFAULT_BPM;
+static uint8_t currentColorCount = 3;
 
 // One callback for every uint8_t knob.
 // ponytail: clamps out-of-range writes instead of ignoring them — replaces three
@@ -53,6 +54,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 static ByteCallbacks effectCb(&currentEffect, 0, NUM_EFFECTS - 1);
 static ByteCallbacks brightnessCb(&currentBrightness, 0, MAX_BRIGHTNESS);
 static ByteCallbacks bpmCb(&currentBPM, MIN_BPM, MAX_BPM);
+static ByteCallbacks colorCountCb(&currentColorCount, 2, 3);
 static ColorCallbacks color1Cb(&color1);
 static ColorCallbacks color2Cb(&color2);
 static ColorCallbacks color3Cb(&color3);
@@ -86,6 +88,7 @@ void initBLE() {
     addChar(pService, COLOR2_CHAR_UUID,     &color2Cb,     c2,                 3);
     addChar(pService, COLOR3_CHAR_UUID,     &color3Cb,     c3,                 3);
     addChar(pService, BPM_CHAR_UUID,        &bpmCb,        &currentBPM,        1);
+    addChar(pService, COLORCOUNT_CHAR_UUID, &colorCountCb, &currentColorCount, 1);
 
     // Standard Battery Service rather than another custom UUID — clients that
     // already speak BLE get the gauge for free.
@@ -119,3 +122,4 @@ CRGB getColor1() { return applyGamma_video(color1, COLOR_GAMMA); }
 CRGB getColor2() { return applyGamma_video(color2, COLOR_GAMMA); }
 CRGB getColor3() { return applyGamma_video(color3, COLOR_GAMMA); }
 uint8_t getBPM() { return currentBPM; }
+uint8_t getColorCount() { return currentColorCount; }

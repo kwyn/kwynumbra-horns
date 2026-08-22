@@ -15,3 +15,6 @@ CRGB getColor1();
 CRGB getColor2();
 CRGB getColor3();
 uint8_t getBPM();
+
+// 2 or 3 — how many of the colours above an effect should use.
+uint8_t getColorCount();

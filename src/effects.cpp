@@ -52,13 +52,7 @@ constexpr float CHASE_SEGMENTS_PER_BEAT = 1.0f;
 static void effectChase(CRGB* leds, uint16_t numLeds) {
     CRGB colors[3] = { getColor1(), getColor2(), getColor3() };
 
-    // A black third colour means "two-colour chase". Reusing the existing colour
-    // characteristic keeps this off the BLE protocol entirely.
-    // ponytail: the cost is that an intentionally black segment (a moving gap)
-    // is unreachable. Add a colour-count characteristic if that look is ever
-    // wanted. Note it also blanks the high zone of the spectrum effect — moot
-    // while there is no mic, but worth remembering when one lands.
-    uint8_t numColors = (colors[2] == CRGB(0, 0, 0)) ? 2 : 3;
+    uint8_t numColors = getColorCount();
 
     float segmentLen = numLeds / static_cast<float>(numColors);
 

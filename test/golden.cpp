@@ -23,12 +23,14 @@ extern "C" void yield(void) {}
 // headers, so changing one breaks this build — which is the point.
 static CRGB g_c1(155, 89, 182), g_c2(0, 206, 209), g_c3(255, 105, 180);
 static uint8_t g_bpm = DEFAULT_BPM;
+static uint8_t g_colorCount = 3;
 static float g_bass = 0, g_mid = 0, g_high = 0;
 
 CRGB getColor1() { return g_c1; }
 CRGB getColor2() { return g_c2; }
 CRGB getColor3() { return g_c3; }
 uint8_t getBPM() { return g_bpm; }
+uint8_t getColorCount() { return g_colorCount; }
 float getBassEnergy() { return g_bass; }
 float getMidEnergy()  { return g_mid; }
 float getHighEnergy() { return g_high; }
@@ -54,10 +56,12 @@ int main() {
         }
     }
 
-    // Two-colour chase: a black third colour drops chase to two segments.
+    // Two-colour chase. Colour 3 is deliberately left at its real value: with a
+    // count of 2, chase must never read colors[2], so this block also proves
+    // black-as-a-signal is really gone.
     // g_now keeps climbing rather than resetting — effects hold a static
     // last-frame timestamp, and rewinding the clock underflows it.
-    g_c3 = CRGB::Black;
+    g_colorCount = 2;
     for (int frame = 0; frame < 40; frame++) {
         g_now += 16;
         for (uint16_t i = 0; i < NUM_LEDS; i++) leds[i] = CRGB::Black;

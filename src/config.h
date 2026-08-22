@@ -37,6 +37,10 @@ constexpr const char* COLOR1_CHAR_UUID     = "19b10003-e8f2-537e-4f6c-d104768a12
 constexpr const char* COLOR2_CHAR_UUID     = "19b10004-e8f2-537e-4f6c-d104768a1214";
 constexpr const char* COLOR3_CHAR_UUID     = "19b10005-e8f2-537e-4f6c-d104768a1214";
 constexpr const char* BPM_CHAR_UUID        = "19b10006-e8f2-537e-4f6c-d104768a1214";
+// How many of the three colours are in play. Replaces the old convention of
+// sending black as colour 3 to mean "two colours", which made an intentionally
+// black segment unreachable and silently blanked the spectrum effect's top zone.
+constexpr const char* COLORCOUNT_CHAR_UUID = "19b10007-e8f2-537e-4f6c-d104768a1214";
 
 // Colour pipeline
 // Colours arrive as screen hex — sRGB, gamma-encoded. WS2812s are near-linear
